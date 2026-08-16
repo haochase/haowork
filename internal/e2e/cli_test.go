@@ -34,17 +34,19 @@ type commandResult struct {
 }
 
 func TestGovernedCLIWorkflowRecoversAndRejectsTampering(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	repositoryRoot := filepath.Clean(filepath.Join(mustWorkingDirectory(t), "..", ".."))
 	binaryName := "haowork"
 	if runtime.GOOS == "windows" {
 		binaryName += ".exe"
 	}
 	binaryPath := filepath.Join(t.TempDir(), binaryName)
-	build := runProcess(ctx, repositoryRoot, "go", "build", "-trimpath", "-o", binaryPath, "./cmd/haowork")
+	buildContext, cancelBuild := context.WithTimeout(context.Background(), 2*time.Minute)
+	build := runProcess(buildContext, repositoryRoot, "go", "build", "-trimpath", "-o", binaryPath, "./cmd/haowork")
+	cancelBuild()
 	requireCommand(t, build, exitOK)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 
 	projectRoot := t.TempDir()
 	runCLI := func(args ...string) commandResult {

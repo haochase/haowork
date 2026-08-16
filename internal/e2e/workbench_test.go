@@ -188,6 +188,10 @@ func TestOfflineWorkbenchAndCLIShareGovernedState(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(indexPath, "local.db")); err != nil {
 		t.Fatalf("local SQLite index was not created: %v", err)
 	}
+	closeSSE()
+	if err := sseResponse.Body.Close(); err != nil {
+		t.Fatalf("close SSE stream before stopping local Core: %v", err)
+	}
 	if err := control.Stop(ctx); err != nil {
 		t.Fatalf("stop local Core: %v", err)
 	}

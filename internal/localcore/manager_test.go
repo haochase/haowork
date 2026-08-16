@@ -10,8 +10,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -825,11 +827,21 @@ func waitForMetadata(t *testing.T, root string) Metadata {
 		if err == nil {
 			return metadata
 		}
-		if !errors.Is(err, os.ErrNotExist) {
+		if !isRetryableMetadataTransition(err) {
 			t.Fatalf("ReadMetadata() error = %v", err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("timed out waiting for core metadata")
 	return Metadata{}
+}
+
+func isRetryableMetadataTransition(err error) bool {
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	return errors.Is(err, syscall.Errno(32)) || errors.Is(err, syscall.Errno(33))
 }
