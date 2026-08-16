@@ -275,8 +275,8 @@ go build -trimpath -o bin/haowork.exe ./cmd/haowork
 [`deploy/agentteams/v1.2.2/.env.example`](deploy/agentteams/v1.2.2/.env.example)。
 本地 `.env.local` 已被 Git 忽略，不得提交 API Key、Token、私钥、Kubeconfig 或云凭据。
 
-只读演示站 `haowork.112318.xyz` 正在部署。它用于浏览预置项目、拓扑、需求链、审批、Trace 与迁移流程，
-不会提供写操作，也不替代真实双区 E2E 证据。
+只读演示站 [haowork.112318.xyz](https://haowork.112318.xyz/) 已上线。它用于浏览预置项目、拓扑、
+需求链、审批、Trace 与迁移流程；服务端不提供写操作，也不替代真实双区 E2E 证据。
 
 ## 🧪 验证边界
 
