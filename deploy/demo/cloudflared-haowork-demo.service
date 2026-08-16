@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloudflare Tunnel for Haowork read-only demo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared --config /home/codechase/.cloudflared/haowork-demo.yml tunnel run
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

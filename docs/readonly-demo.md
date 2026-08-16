@@ -26,15 +26,35 @@ systemctl --user enable --now haowork-demo
 curl --fail http://127.0.0.1:4175/healthz
 ```
 
-系统管理员需要在既有 Cloudflare Tunnel 的 ingress 中额外配置：
+公网域名可选两种安全方式，二选一即可：
+
+1. **由系统管理员扩展既有 Tunnel**：在既有 ingress 中增加：
 
 ```yaml
 - hostname: haowork.112318.xyz
   service: http://127.0.0.1:4175
 ```
 
-然后为该 hostname 创建 Tunnel DNS 路由并重启 `cloudflared`。不要把 Tunnel 凭据、证书、API Key
-或 `.env.local` 上传到本仓库。外网验证应同时检查首页、快照接口、以及写请求返回 `405`：
+   然后创建该 hostname 的 Tunnel DNS 路由并重启 `cloudflared`。
+
+2. **使用独立的用户级 Tunnel（公开 Demo 推荐）**：创建专用 Tunnel，并将凭据限制在
+   `~/.cloudflared/`。配置文件应只包含当前 Demo hostname 和 `127.0.0.1:4175`：
+
+```yaml
+tunnel: <新建 Tunnel 的 UUID>
+credentials-file: /home/codechase/.cloudflared/haowork-demo.json
+ingress:
+  - hostname: haowork.112318.xyz
+    service: http://127.0.0.1:4175
+  - service: http_status:404
+```
+
+   使用 [`deploy/demo/cloudflared-haowork-demo.service`](../deploy/demo/cloudflared-haowork-demo.service)
+   作为用户级 systemd 单元模板。独立 Tunnel 不应复用到其他站点的 ingress 配置，否则不同连接器的
+   路由规则可能不一致。
+
+不要把 Tunnel 凭据、证书、API Key 或 `.env.local` 上传到本仓库。外网验证应同时检查首页、快照接口、
+以及写请求返回 `405`：
 
 ```bash
 curl --fail https://haowork.112318.xyz/healthz
