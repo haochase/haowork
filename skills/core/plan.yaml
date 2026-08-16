@@ -1,0 +1,13 @@
+name: plan
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"goal":{"type":"string"}},"required":["goal"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"plan_id":{"type":"string"}},"required":["plan_id"]}'
+risk: L1
+allowed_functions: [manager, delivery_leader]
+required_context: true
+required_lease: true
+supported_environments: [public, internal]
+adapter: core.plan
+timeout: 30s
+retry_policy: workflow-owned
+evidence_policy: plan-record

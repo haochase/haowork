@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://haowork.local/schemas/p0-05-v1.2.2-cluster-evidence.schema.json",
+  "title": "Haowork P0-05 AgentTeams v1.2.2 Cluster Evidence",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "baseline",
+    "topology",
+    "skills",
+    "data_path",
+    "network_policy",
+    "restart"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "baseline": {
+      "type": "object",
+      "required": ["cluster_name", "contract", "crd_kinds", "zones"],
+      "properties": {
+        "cluster_name": { "type": "string", "minLength": 1 },
+        "contract": {
+          "type": "object",
+          "required": ["tag", "commit", "chart_version"],
+          "properties": {
+            "tag": { "const": "v1.2.2" },
+            "commit": { "const": "849182af8e017168a5a200a87b1062142caf462d" },
+            "chart_version": { "const": "1.1.1" }
+          }
+        },
+        "crd_kinds": {
+          "type": "array",
+          "minItems": 4,
+          "items": { "type": "string", "enum": ["Human", "Manager", "Team", "Worker"] }
+        },
+        "zones": { "type": "array", "minItems": 2 }
+      }
+    },
+    "topology": {
+      "type": "object",
+      "required": ["team_name", "team_room_id", "leader_room_id", "manager_principal_id", "leader_principal_id", "worker_principal_ids", "human_principal_id"]
+    },
+    "skills": { "type": "object", "minProperties": 3 },
+    "data_path": {
+      "type": "object",
+      "required": ["matrix", "artifact", "mcp"],
+      "properties": {
+        "matrix": {
+          "type": "object",
+          "required": ["event_id", "sender_id", "room_id", "mission_id"],
+          "properties": {
+            "event_id": { "type": "string", "minLength": 2, "pattern": "^\\$\\S+$", "format": "matrix-event-id" },
+            "sender_id": { "type": "string", "minLength": 3, "pattern": "^@[^\\s:]+:.+$", "format": "matrix-user-id" },
+            "room_id": { "type": "string", "minLength": 4, "pattern": "^![^\\s:]+:.+$", "format": "matrix-room-id" },
+            "mission_id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }
+          },
+          "additionalProperties": false
+        },
+        "artifact": {
+          "type": "object",
+          "required": ["uri", "sha256", "size", "environment_id", "s3_key"],
+          "properties": {
+            "uri": { "type": "string", "minLength": 8, "pattern": "^s3://[^/]+/.+$", "format": "uri" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "size": { "type": "integer", "minimum": 0 },
+            "environment_id": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,62}$" },
+            "s3_key": { "type": "string", "minLength": 1, "pattern": "^[^/].*$" }
+          },
+          "additionalProperties": false
+        },
+        "mcp": {
+          "type": "object",
+          "required": ["consumer_name", "route_name", "server_name", "trace_id", "trace_sha256", "core_history_sha256"],
+          "properties": {
+            "consumer_name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+            "route_name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+            "server_name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+            "trace_id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+            "trace_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "core_history_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "network_policy": {
+      "type": "object",
+      "required": ["public_to_internal", "internal_to_public"],
+      "properties": {
+        "public_to_internal": { "const": "denied" },
+        "internal_to_public": { "const": "denied" }
+      }
+    },
+    "restart": {
+      "type": "object",
+      "required": ["controller", "matrix_event_count_before", "matrix_event_count_after", "opaque_cursor_before", "opaque_cursor_after", "new_event_id"]
+    }
+  },
+  "additionalProperties": false
+}

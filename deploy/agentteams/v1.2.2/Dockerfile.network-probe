@@ -1,0 +1,4 @@
+FROM scratch
+COPY haowork-network-probe /haowork-network-probe
+USER 65532:65532
+ENTRYPOINT ["/haowork-network-probe"]

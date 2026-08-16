@@ -1,0 +1,13 @@
+name: patch
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"patch_sha256":{"type":"string"}},"required":["patch_sha256"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"change_id":{"type":"string"}},"required":["change_id"]}'
+risk: L2
+allowed_functions: [build]
+required_context: true
+required_lease: true
+supported_environments: [public, internal]
+adapter: cross-zone.patch
+timeout: 120s
+retry_policy: workflow-owned
+evidence_policy: change-attribution

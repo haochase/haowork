@@ -1,0 +1,13 @@
+name: record
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"record_id":{"type":"string"}},"required":["record_id"]}'
+risk: L1
+allowed_functions: [delivery_leader, research, build, verify]
+required_context: true
+required_lease: true
+supported_environments: [public, internal]
+adapter: core.record
+timeout: 30s
+retry_policy: workflow-owned
+evidence_policy: immutable-event

@@ -1,0 +1,13 @@
+name: audit
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"artifact_sha256":{"type":"string"}},"required":["artifact_sha256"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"audit_id":{"type":"string"}},"required":["audit_id"]}'
+risk: L1
+allowed_functions: [verify]
+required_context: true
+required_lease: true
+supported_environments: [public, internal]
+adapter: cross-zone.audit
+timeout: 60s
+retry_policy: workflow-owned
+evidence_policy: independent-audit

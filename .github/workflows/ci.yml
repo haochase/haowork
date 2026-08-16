@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.14.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache: true
+      - run: npm ci --prefix web
+      - run: npm test --prefix web
+      - run: npm run build --prefix web
+      - run: go test ./internal/e2e -run TestOfflineWorkbenchAndCLIShareGovernedState -count=1
+      - run: go test ./internal/e2e -run TestP003ContextEvidenceExecutorAndReplay -count=1
+      - run: go test ./internal/e2e -run TestP004 -count=1
+      - run: gofmt -w cmd internal
+      - shell: bash
+        run: git diff --exit-code
+      - run: go vet ./...
+      - run: go test ./... -count=1
+      - run: go build ./cmd/haowork
+      - run: go test ./internal/benchmark -count=1
+      - run: go build ./cmd/haowork-bench
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.14.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache: true
+      - run: npm ci --prefix web
+      - run: npm test --prefix web
+      - run: npm run build --prefix web
+      - run: go test ./internal/e2e -run TestP003ContextEvidenceExecutorAndReplay -count=1
+      - run: go test ./internal/e2e -run TestP004 -count=1
+      - run: go test ./... -race -count=1
+      - run: go test ./internal/benchmark -count=1

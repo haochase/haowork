@@ -1,0 +1,33 @@
+# Default deny for the public zone. The installer adds a scoped Kubernetes API
+# policy and, only when configured, explicit non-zero external CIDRs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: haowork-public-default-deny
+  namespace: haowork-public
+  labels:
+    haowork.io/zone: public
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              haowork.io/zone: public
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              haowork.io/zone: public
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["report_version", "scenario_sha256", "raw_runs", "raw_runs_sha256", "raw_runs_path", "aggregates", "evidence_refs", "claims", "environment_versions"],
+  "properties": {
+    "report_version": {"type": "string", "const": "p0-05.v1"},
+    "scenario_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "raw_runs_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "raw_runs_path": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string"},
+    "raw_runs": {"type": "array", "minItems": 1},
+    "aggregates": {"type": "array", "minItems": 1},
+    "evidence_refs": {"type": "array", "minItems": 1},
+    "claims": {"type": "array"},
+    "environment_versions": {"type": "object", "additionalProperties": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

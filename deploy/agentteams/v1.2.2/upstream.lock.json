@@ -1,0 +1,72 @@
+{
+  "schema_version": 2,
+  "repository": "https://github.com/agentscope-ai/AgentTeams",
+  "tag": "v1.2.2",
+  "commit": "849182af8e017168a5a200a87b1062142caf462d",
+  "chart_path": "helm/agentteams",
+  "chart_version": "1.1.1",
+  "chart_app_version": "1.1.1",
+  "upstream_manifest": {
+    "algorithm": "sha256",
+    "files": [
+      {"path": "helm/agentteams/Chart.yaml", "sha256": "5c7b1b8d0968db7b452049e27e012b9668b38143b4236dea6b139e8f0467a18e"},
+      {"path": "helm/agentteams/Chart.lock", "sha256": "f4ada56a4107df94d1a3175f683490c4f143c8381a66a81619aa33d42a46aa43"},
+      {"path": "helm/agentteams/values.yaml", "sha256": "83da031e460c3ec102ad99baf5f19b447e9b19a11ab17598b309ced5ff066e97"},
+      {"path": "helm/agentteams/crds/managers.agentteams.io.yaml", "sha256": "2c279e6c4203b320ffa73fb8f88a7639e5a1e8dd9a00c848579963154f7ea10a"},
+      {"path": "helm/agentteams/crds/workers.agentteams.io.yaml", "sha256": "3864240f99e7fa2f15e33c6886a1012fb736c871cd021e87ed2ae499234a1286"},
+      {"path": "helm/agentteams/crds/teams.agentteams.io.yaml", "sha256": "bd75a92d6187d0283061d3291cf102365cf86fb2b01f8a8ddc8f4b5530fc7342"},
+      {"path": "helm/agentteams/crds/humans.agentteams.io.yaml", "sha256": "4637e64377856574fa4fe9bb76567fb7a926cc2bd0b1f1504afd1f71261bb897"}
+    ]
+  },
+  "chart_dependencies": [
+    {
+      "name": "higress",
+      "repository": "https://higress.io/helm-charts",
+      "version": "2.2.1",
+      "lock_digest": "sha256:bfda3317506f04c1088d398ca7b10137409999ec54e1d36b7b5d525145ee931b"
+    }
+  ],
+  "api_group": "agentteams.io",
+  "api_version": "v1beta1",
+  "kinds": [
+    "Manager",
+    "Worker",
+    "Team",
+    "Human"
+  ],
+  "controller_ownership_label": "agentteams.io/controller",
+  "image_resolution": {
+    "status": "RESOLVED",
+    "reason": "",
+    "deployment_profile": {
+      "manager_runtime": "openclaw",
+      "worker_runtime": "openclaw"
+    },
+    "rendered_inventory": {
+      "status": "RESOLVED",
+      "reason": "",
+      "manifest_sha256": "4ad4b8e7e279dbe6e8687dc67daaf640870f115f53cb09ef7902953308909ffe",
+      "images": [
+        {"name":"controller","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-controller","tag":"v1.2.2","resolved_digest":"sha256:a0709506e6dd047bc6aadcfd8d77c8f193683d4326795c263f32b7be9e791570","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#controller.image"},
+        {"name":"element-web","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/element-web","tag":"20260216","resolved_digest":"sha256:827ae9ebea5ec0eeb487660f4f04e5789b666667f17a0d63b5c0e4ad8b9b9ca1","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#elementWeb.image"},
+        {"name":"higress-console","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/console","tag":"2.2.1","resolved_digest":"sha256:90ccdbb078375aad42f874feddba9d964eca34f192ee8dbab7d9a22079b580a4","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"helm dependency higress 2.2.1#higress-console.image"},
+        {"name":"higress-controller","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/higress","tag":"2.2.1","resolved_digest":"sha256:7d62ee8dbc5d45dd8659e8a1f507bdc2183d375ac40695b8a5a2238b3051081f","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"helm dependency higress 2.2.1#higress-core.controller"},
+        {"name":"higress-gateway","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/gateway","tag":"2.2.1","resolved_digest":"sha256:5fe4760c83ccfd8a126fcbbf04af20dd7f33e7e0edc2866b11972ee873e5fd12","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"helm dependency higress 2.2.1#higress-core.gateway"},
+        {"name":"higress-pilot","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/pilot","tag":"2.2.1","resolved_digest":"sha256:fcd65ced98be1c39a3c18834e60c54015f71e99f47801678538d43c3f25657d1","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"helm dependency higress 2.2.1#higress-core.pilot"},
+        {"name":"matrix-tuwunel","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/tuwunel","tag":"20260216","resolved_digest":"sha256:fa0f68cf591c90b12888c2df76c2ce03fb50a7cd4a9c7fe0199480b291932c00","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#matrix.tuwunel.image"},
+        {"name":"storage-minio","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio","tag":"20260216","resolved_digest":"sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#storage.minio.image"}
+      ]
+    },
+    "images": [
+      {"name":"matrix-tuwunel","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/tuwunel","tag":"20260216","resolved_digest":"sha256:fa0f68cf591c90b12888c2df76c2ce03fb50a7cd4a9c7fe0199480b291932c00","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"helm/agentteams/values.yaml#matrix.tuwunel.image"},
+      {"name":"storage-minio","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio","tag":"20260216","resolved_digest":"sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"helm/agentteams/values.yaml#storage.minio.image"},
+      {"name":"controller","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-controller","tag":"v1.2.2","resolved_digest":"sha256:a0709506e6dd047bc6aadcfd8d77c8f193683d4326795c263f32b7be9e791570","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#controller.image"},
+      {"name":"manager","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-manager","tag":"v1.2.2","resolved_digest":"sha256:dd11878943e4a425ff38dcc152c9d44ea0e68d97bac89f711207134b8636c0fb","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#manager.image"},
+      {"name":"element-web","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/element-web","tag":"20260216","resolved_digest":"sha256:827ae9ebea5ec0eeb487660f4f04e5789b666667f17a0d63b5c0e4ad8b9b9ca1","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#elementWeb.image"},
+      {"name":"worker-openclaw","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker","tag":"v1.2.2","resolved_digest":"sha256:301f9e311654eca203246fa666d63a126244ea8793f700603d2a6d37b7ffea75","resolution_status":"RESOLVED","requirement":"ACTIVE","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#worker.defaultImage.openclaw"},
+      {"name":"worker-copaw","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker","tag":"v1.2.2","resolved_digest":"sha256:7a6780ef76b6c7b056a2c343eeabc697f70108dae153afe8ddb76a3fad9a41b4","resolution_status":"RESOLVED","requirement":"OPTIONAL","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#worker.defaultImage.copaw"},
+      {"name":"worker-hermes","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-hermes-worker","tag":"v1.2.2","resolved_digest":"sha256:e611f38e1aa2451c97b979ae944a787f0db69c9d65c21c72a05ab33b53288e4e","resolution_status":"RESOLVED","requirement":"OPTIONAL","reason":"","source":"deploy/agentteams/v1.2.2/*-values.yaml#worker.defaultImage.hermes"},
+      {"name":"worker-openhuman","repository":"higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/agentteams-openhuman-worker","tag":"v1.2.2","resolved_digest":"","resolution_status":"UNAVAILABLE_UPSTREAM","requirement":"OPTIONAL","reason":"AgentTeams v1.2.2 declares the optional OpenHuman runtime, but its public registry repository/tag is not published.","source":"helm/agentteams/values.yaml#worker.defaultImage.openhuman"}
+    ]
+  }
+}

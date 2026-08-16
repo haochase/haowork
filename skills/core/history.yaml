@@ -1,0 +1,13 @@
+name: history
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"cursor":{"type":"string"}}}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"events":{"type":"array"}},"required":["events"]}'
+risk: L0
+allowed_functions: [manager, delivery_leader, research, build, verify]
+required_context: false
+required_lease: false
+supported_environments: [public, internal]
+adapter: core.history
+timeout: 30s
+retry_policy: workflow-owned
+evidence_policy: immutable-reference

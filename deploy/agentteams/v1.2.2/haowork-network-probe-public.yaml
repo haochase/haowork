@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haowork-network-probe
+  namespace: haowork-public
+  labels:
+    app.kubernetes.io/name: haowork-network-probe
+    app.kubernetes.io/component: network-probe
+    haowork.io/zone: public
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haowork-network-probe
+      haowork.io/zone: public
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: haowork-network-probe
+        app.kubernetes.io/component: network-probe
+        haowork.io/zone: public
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: probe
+          image: haowork-network-probe:local
+          imagePullPolicy: Never
+          command: ["/haowork-network-probe", "serve"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532

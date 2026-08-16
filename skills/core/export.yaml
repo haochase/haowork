@@ -1,0 +1,13 @@
+name: export
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"mission_id":{"type":"string"}},"required":["mission_id"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"capsule_sha256":{"type":"string"}},"required":["capsule_sha256"]}'
+risk: L2
+allowed_functions: [delivery_leader]
+required_context: true
+required_lease: true
+supported_environments: [public]
+adapter: core.export
+timeout: 90s
+retry_policy: workflow-owned
+evidence_policy: signed-capsule

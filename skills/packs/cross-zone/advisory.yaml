@@ -1,0 +1,13 @@
+name: advisory
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"question":{"type":"string"}},"required":["question"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"recommendation":{"type":"string"}},"required":["recommendation"]}'
+risk: L0
+allowed_functions: [research]
+required_context: true
+required_lease: true
+supported_environments: [public, internal]
+adapter: cross-zone.advisory
+timeout: 30s
+retry_policy: workflow-owned
+evidence_policy: advisory-reference

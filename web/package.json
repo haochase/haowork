@@ -1,0 +1,26 @@
+{
+  "name": "haowork-workbench",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.14.0 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run --passWithNoTests",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "6.0.4",
+    "typescript": "7.0.2",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}

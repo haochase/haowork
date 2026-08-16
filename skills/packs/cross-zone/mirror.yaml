@@ -1,0 +1,13 @@
+name: mirror
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"artifact_sha256":{"type":"string"}},"required":["artifact_sha256"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"mirror_ref":{"type":"string"}},"required":["mirror_ref"]}'
+risk: L1
+allowed_functions: [delivery_leader, build]
+required_context: true
+required_lease: true
+supported_environments: [public, internal]
+adapter: cross-zone.mirror
+timeout: 60s
+retry_policy: workflow-owned
+evidence_policy: artifact-digest

@@ -1,0 +1,142 @@
+# AgentTeams v1.2.2 public-zone base values.
+# Runtime credentials are injected by scripts/p0-05-v122-up.ps1 into an ignored
+# temporary values file. Do not put a real token, password, or API key here.
+global:
+  namespace: "haowork-public"
+  imageTag: "v1.2.2"
+
+credentials:
+  adminUser: "haowork-public-admin"
+  llmProvider: "openai-compat"
+  defaultModel: "haowork-public-model"
+
+preflight:
+  llm:
+    # Haowork verifies provider reachability before a real install. Keeping the
+    # upstream Helm hook off makes a credential-free RenderOnly check possible.
+    enabled: false
+
+matrix:
+  provider: "tuwunel"
+  mode: "managed"
+  serverName: "haowork-public.matrix.local"
+  appservice:
+    enabled: true
+  tuwunel:
+    image:
+      repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/tuwunel"
+      tag: "20260216@sha256:fa0f68cf591c90b12888c2df76c2ce03fb50a7cd4a9c7fe0199480b291932c00"
+    newUserDisplayNameSuffix: ""
+    persistence:
+      enabled: false
+
+gateway:
+  provider: "higress"
+  mode: "managed"
+  # Element Web runs in the host browser, so this must be the loopback
+  # endpoint maintained by the public-zone kubectl port-forward, not a
+  # Kubernetes-only service DNS name.
+  publicURL: "http://127.0.0.1:18080"
+  higress:
+    enabled: true
+
+storage:
+  provider: "minio"
+  mode: "managed"
+  bucket: "haowork-public-artifacts"
+  minio:
+    image:
+      repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio"
+      tag: "20260216@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+    persistence:
+      enabled: false
+
+higress:
+  global:
+    local: false
+    ingressClass: "haowork-public-higress"
+    watchNamespace: "haowork-public"
+    oneNamespace: true
+  higress-core:
+    gateway:
+      tag: "2.2.1@sha256:5fe4760c83ccfd8a126fcbbf04af20dd7f33e7e0edc2866b11972ee873e5fd12"
+      replicas: 1
+      service:
+        type: ClusterIP
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    controller:
+      tag: "2.2.1@sha256:7d62ee8dbc5d45dd8659e8a1f507bdc2183d375ac40695b8a5a2238b3051081f"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    pilot:
+      tag: "2.2.1@sha256:fcd65ced98be1c39a3c18834e60c54015f71e99f47801678538d43c3f25657d1"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+  higress-console:
+    global:
+      ingressClass: "haowork-public-higress"
+      watchNamespace: "haowork-public"
+    admin:
+      password: ""
+    image:
+      repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/console"
+      tag: "2.2.1@sha256:90ccdbb078375aad42f874feddba9d964eca34f192ee8dbab7d9a22079b580a4"
+
+controller:
+  replicaCount: 1
+  image:
+    repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-controller"
+    tag: "v1.2.2@sha256:a0709506e6dd047bc6aadcfd8d77c8f193683d4326795c263f32b7be9e791570"
+    pullPolicy: IfNotPresent
+  resourcePrefix: "haowork-public-agentteams-"
+  resourceAutoPrefix: true
+  workerBackend: "k8s"
+  uninstallHook:
+    enabled: true
+
+manager:
+  enabled: true
+  runtime: "openclaw"
+  image:
+    repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-manager"
+    tag: "v1.2.2@sha256:dd11878943e4a425ff38dcc152c9d44ea0e68d97bac89f711207134b8636c0fb"
+
+worker:
+  defaultRuntime: "openclaw"
+  defaultImage:
+    openclaw:
+      repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker"
+      tag: "v1.2.2@sha256:301f9e311654eca203246fa666d63a126244ea8793f700603d2a6d37b7ffea75"
+    copaw:
+      repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker"
+      tag: "v1.2.2@sha256:7a6780ef76b6c7b056a2c343eeabc697f70108dae153afe8ddb76a3fad9a41b4"
+    hermes:
+      repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-hermes-worker"
+      tag: "v1.2.2@sha256:e611f38e1aa2451c97b979ae944a787f0db69c9d65c21c72a05ab33b53288e4e"
+    openhuman:
+      repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/agentteams-openhuman-worker"
+      tag: "v1.2.2"
+
+elementWeb:
+  enabled: true
+  image:
+    repository: "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/element-web"
+    tag: "20260216@sha256:827ae9ebea5ec0eeb487660f4f04e5789b666667f17a0d63b5c0e4ad8b9b9ca1"
+
+fullnameOverride: "haowork-public-agentteams"

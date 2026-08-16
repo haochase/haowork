@@ -1,0 +1,53 @@
+# Local design and browser-companion state
+.superpowers/
+.worktrees/
+
+# Local research, tool state, and external reference material
+.codex/
+.local-archive/
+GOAI/
+raw/
+项目开发示例/
+.tmp-gocache-*/
+*.mhtml
+
+# Haowork machine-local runtime state
+.haowork/runtime/
+.haowork/local/
+.haowork/cache/
+.haowork/index/
+.haowork/trace/
+.tools/
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+*.local
+/deploy/agentteams/v1.2.2/.env.local
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Go build and test output
+bin/
+*.exe
+*.test
+coverage.out
+*.prof
+
+# Workbench dependencies and generated assets
+node_modules/
+dist/
+coverage/
+!internal/workbench/
+!internal/workbench/dist/
+internal/workbench/dist/*
+!internal/workbench/dist/.keep
+
+# Temporary output
+tmp/
+*.log

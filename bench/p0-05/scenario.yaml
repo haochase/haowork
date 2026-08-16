@@ -1,0 +1,18 @@
+id: cross-zone-security-patch
+version: p0-05.v1
+source_baseline: fixture:security-patch-baseline-v1
+model_id: configured-at-run-time
+token_budget: 12000
+time_budget_ms: 900000
+completion_criteria:
+  - signed capsule imported with owner approval
+  - independent verify evidence recorded
+  - return conflict classified and explicitly resolved
+  - trace replay succeeds after index deletion
+fixture_repository: fixtures/p0-05-security-patch
+required_evidence:
+  - trace-ledger
+  - capsule-manifest
+  - audit-result
+  - conflict-decision
+schema_sha256: 38681f774c53c9c1d85f76c5e4a4166a6fc64d95b2bc3fde2e6f6ca993bfe9e1
