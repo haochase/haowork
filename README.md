@@ -1,4 +1,4 @@
-# Haowork
+<h1 align="center">Haowork</h1>
 
 <p align="center">
   <strong>AI 原生软件工程治理与追溯平台</strong><br>
