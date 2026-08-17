@@ -1,8 +1,10 @@
+English version | [中文版](README_cn.md)
+
 <h1 align="center">Haowork</h1>
 
 <p align="center">
-  <strong>AI 原生软件工程治理与追溯平台</strong><br>
-  让 AgentTeams 负责协作执行，让工程目标、责任、证据与代码变化持续可追溯
+  <strong>Software engineering governance and traceability for AI-native development</strong><br>
+  Let AgentTeams coordinate execution while goals, responsibility, evidence, and code changes remain traceable
 </p>
 
 <p align="center">
@@ -13,120 +15,132 @@
 </p>
 
 <p align="center">
-  <a href="#-haowork-解决什么问题">问题</a> ·
-  <a href="#-典型场景">场景</a> ·
-  <a href="#️-总体架构">架构</a> ·
-  <a href="#-haowork-与-agentteams-如何分工">分工</a> ·
-  <a href="#-在线只读演示">在线演示</a> ·
-  <a href="#-快速开始">开始使用</a> ·
-  <a href="#-验证边界">验证边界</a>
+  <a href="#-what-problem-does-haowork-solve">Problem</a> ·
+  <a href="#-use-cases">Use Cases</a> ·
+  <a href="#️-architecture">Architecture</a> ·
+  <a href="#-how-haowork-and-agentteams-work-together">Responsibilities</a> ·
+  <a href="#-online-read-only-demo">Online Demo</a> ·
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-verification-boundaries">Verification</a>
 </p>
 
-> **项目状态：早期预览。** 仓库已经实现治理事实、Mission、风险审批、执行追踪、团队同步、
-> 签名迁移和 AgentTeams `v1.2.2` 适配合同。真实双区部署仍依赖完整官方镜像、运行凭据、
-> 模型服务和 Core Bridge；依赖缺失时返回明确的 `BLOCKED_*`，不会用模拟结果冒充成功。
+> **Project status: early preview.** The repository implements governance facts, Missions, risk approvals,
+> execution traces, team synchronization, signed transfers, and an AgentTeams `v1.2.2` integration contract.
+> A real dual-zone deployment still requires the complete official image set, runtime credentials, model
+> services, and Core Bridge. Missing dependencies produce explicit `BLOCKED_*` results rather than simulated success.
 
-## 🎬 在线只读演示
+## 🎬 Online Read-only Demo
 
 > [!NOTE]
-> 可访问 [haowork.112318.xyz](https://haowork.112318.xyz/) 浏览一个**预置公开案例**。
-> 它展示需求链、AgentTeams 拓扑、审批、Trace 与跨环境迁移的关系；不连接真实项目、不接收凭据，
-> 且服务端只提供读取路由，任何写请求都会被拒绝。
+> Visit [haowork.112318.xyz](https://haowork.112318.xyz/) to explore a **preloaded public case**.
+> It shows how requirement chains, AgentTeams topology, approvals, traces, and cross-environment transfers relate.
+> It is not connected to a real project, accepts no credentials, and exposes read-only server routes.
 
-| 想看什么 | 在 Demo 中如何查看 |
+| What you want to inspect | Where to look in the demo |
 | --- | --- |
-| AI Coding 是否偏离初始设计 | 从 GoalVersion、需求状态和责任人回看交付边界 |
-| 多 Agent 如何分工 | 查看 Manager、Leader、Research、Build、Verify 的受绑定拓扑 |
-| 输出为什么可信 | 查看审批记录、Trace 时间线与独立验证摘要 |
-| 跨区迁移怎样控制风险 | 查看 Capsule 的白名单、验签、审批和重新绑定步骤 |
+| Whether AI Coding drifted from the original design | Review GoalVersion, requirement status, and ownership boundaries |
+| How multiple Agents divide work | Inspect the bound Manager, Leader, Research, Build, and Verify topology |
+| Why an output can be trusted | Inspect approval records, the Trace timeline, and independent verification summaries |
+| How cross-zone transfer risk is controlled | Inspect Capsule allowlists, signature verification, approval, and rebinding steps |
 
-在线演示由独立站点维护。本仓库不包含门户实现、服务器部署配置或运行环境凭据。
+The online demo is maintained independently. This repository does not contain its portal implementation,
+server deployment configuration, or runtime credentials.
 
-## 🧭 Haowork 解决什么问题
+## 🧭 What Problem Does Haowork Solve?
 
-AI Coding 正把软件开发从“人写代码、工具辅助”推向“人提出目标与约束、Agent 执行交付”。
-开发速度提高后，新的工程问题随之出现：
+AI Coding is moving software development from "people write code with tool assistance" to "people define goals
+and constraints while Agents execute delivery." Higher implementation speed introduces a new set of engineering
+problems:
 
-- 最近一次对话会不会覆盖最初的需求与架构约束？
-- 多人同时指挥多个 Agent 时，谁提出、谁批准、谁实现、谁验证？
-- 项目换设备、换模型、换 Agent 或迁移到隔离环境后，工程上下文如何延续？
-- 接手历史系统时，如何从代码变化回查设计原因，而不是只看到最终文件？
+- Can the latest conversation override the original requirements and architecture constraints?
+- When several people direct several Agents, who proposed, approved, implemented, and verified each change?
+- How does engineering context survive a device, model, Agent, or isolated-environment migration?
+- When maintaining a legacy system, how can a team trace a code change back to its design rationale?
 
-传统 Git 主要记录“用户 - Commit/Push - 代码变化”。Haowork 在此基础上补充治理链：
+Traditional Git primarily records "user - Commit/Push - code change." Haowork adds a governance chain:
 
 ```text
-用户 -> 明确需求与设计 -> 责任与审批 -> Agent 执行证据 -> 代码变化
+Human -> explicit requirement and design -> responsibility and approval -> Agent execution evidence -> code change
 ```
 
-它不替代 Git，也不重新实现多智能体框架；它位于 Agent 执行层之外，负责把需求、设计、权限、
-责任、证据和异常处置固化为可回放的工程事实。
+Haowork does not replace Git or reimplement a multi-agent framework. It sits outside the Agent execution layer
+and records requirements, design constraints, permissions, responsibility, evidence, and exception handling as
+replayable engineering facts.
 
-| 使用者关心的问题 | Haowork 给出的工程回答 |
+| Engineering question | Haowork's answer |
 | --- | --- |
-| 为什么要改？ | Requirement、GoalVersion 与 Context |
-| 谁可以改？ | 四维身份、Lease、Scope 与 Approval |
-| 谁实际执行？ | Mission、AgentTeams 拓扑与 RuntimeBinding |
-| 结果是否可信？ | Trace、Evidence、Workspace Digest 与独立 Verify |
-| 发生分歧怎么办？ | 追加式历史、显式 Conflict、人工决策与 Recovery |
+| Why should this change? | Requirement, GoalVersion, and Context |
+| Who may change it? | Four-dimensional identity, Lease, Scope, and Approval |
+| Who actually executed it? | Mission, AgentTeams topology, and RuntimeBinding |
+| Can the result be trusted? | Trace, Evidence, Workspace Digest, and independent Verify |
+| What happens when facts diverge? | Append-only history, explicit Conflict, human decisions, and Recovery |
 
-## 🏭 典型场景
+## 🏭 Use Cases
 
-### 1. 敏感业务的公网区与内场连续开发
+### 1. Continuous Development Across Public and Isolated Environments
 
-银行、证券、国防科研等团队经常同时面对两类环境：公网区拥有更强的模型、工具与开源生态；
-内场保存真实业务数据，并承担长期二次开发和运维。两个区域不能依赖持续联网，也不能直接复制
-运行时身份、凭据、私人对话或完整工作目录。
+Teams in banking, securities, defense research, and other sensitive domains often operate in two environments.
+The public zone offers stronger models, tools, and open-source ecosystems. The internal zone contains real business
+data and supports long-term secondary development and maintenance. The zones cannot depend on continuous
+connectivity, nor can they copy runtime identities, credentials, private conversations, or complete workspaces.
 
-Haowork 把允许迁移的需求版本、架构约束、责任、验证结论和最小工程事实组成签名 Capsule。
-导入方先验签、预览、审批和冲突检测，再把逻辑责任重新绑定到本地运行时。内场遇到难题时，
-也可只导出经过白名单与审批的问题上下文，在外场分析后将已批准增量重新导入。
+Haowork packages approved requirement versions, architecture constraints, responsibility, verification conclusions,
+and minimal engineering facts into a signed Capsule. The importing side verifies, previews, approves, and checks
+conflicts before rebinding logical responsibility to its local runtime. When an internal team encounters a difficult
+problem, it can export only approved and allowlisted context for external analysis, then import the approved delta.
 
-**实际帮助：** 换环境、换模型和换 Agent 后仍能延续前期设计；跨区迁移不要求两个区域联网，
-也不把完整项目和敏感上下文直接带出。
+**Practical value:** design continuity survives environment, model, and Agent changes. Cross-zone transfer does not
+require live connectivity and does not directly export the entire project or sensitive context.
 
-### 2. AI Coding 小团队的责任与偏差治理
+### 2. Responsibility and Drift Governance for Small AI Coding Teams
 
-在 3 到 10 人的小团队里，Agent 产出代码的速度可能远高于人的逐文件审查速度。成员不断追加需求，
-人的记忆会衰减，Agent 也可能迎合最近指令而偏离最初设计。Issue、聊天和 Commit 分散保存信息，
-很难在同一视图里判断“目标是否变化”和“谁应为变化负责”。
+In a team of 3 to 10 people, Agents may produce code much faster than humans can review every file. Team members
+keep adding requirements, human memory decays, and Agents may optimize for the latest instruction while drifting
+from the initial design. Issues, chats, and commits scatter the evidence, making it difficult to determine whether
+the goal changed and who is responsible for the change.
 
-Haowork 维护追加式 Requirement、GoalVersion、Task、Context、Mission、Approval 与 Evidence。
-人主要审核目标变化、关键设计、风险审批和独立验证；Research、Build、Verify Agent 只在明确的
-Lease 与 Scope 内工作。
+Haowork maintains append-only Requirements, GoalVersions, Tasks, Contexts, Missions, Approvals, and Evidence.
+Humans focus on goal changes, critical designs, risk approvals, and independent verification. Research, Build,
+and Verify Agents operate only within explicit Leases and Scopes.
 
-**实际帮助：** 团队不必逐行阅读所有 Agent 产物，也能检查方向、责任和验证状态；出现目标、
-设计或证据分歧时，系统显式产生冲突，而不是静默覆盖历史。
+**Practical value:** a team can inspect direction, responsibility, and verification status without reading every
+line of Agent output. Goal, design, or evidence divergence becomes an explicit conflict instead of silently
+overwriting history.
 
-### 3. 历史项目与开源项目的设计根因追溯
+### 3. Design-rationale Traceability for Legacy and Open-source Projects
 
-接手历史系统时，原成员可能已经离职；基于开源项目二次开发时，维护者通常只能看到代码与提交，
-却不知道某个限制源于业务要求、架构取舍、环境条件还是临时修复。
+When a team takes over a legacy system, the original developers may have left. When extending an open-source
+project, maintainers usually see code and commits but may not know whether a restriction came from a business
+requirement, architecture tradeoff, environment constraint, or temporary workaround.
 
-从一开始使用 Haowork 的项目，可由代码变化回查需求版本、上下文、责任、Agent 任务与验证证据。
-没有 Haowork 历史的旧项目，只建立“代码与文档导入 -> 候选关系 -> 人工确认”的可追溯基线，
-不会声称自动恢复原作者的真实意图。
+For projects that use Haowork from the start, a code change can be traced back to its requirement version, context,
+owner, Agent assignment, and verification evidence. For older projects without Haowork history, the system creates
+a traceable baseline through "code and document import -> candidate relationships -> human confirmation." It does
+not claim to reconstruct the original author's intent automatically.
 
-**实际帮助：** 维护者可以区分已记录事实与后续推断，更可靠地评估重构原因、约束和影响范围。
+**Practical value:** maintainers can distinguish recorded facts from later inference and evaluate refactoring
+rationale, constraints, and impact with greater confidence.
 
-## 🧩 产品形态
+## 🧩 Product Interfaces
 
-Haowork 当前提供三类入口，共享同一份治理投影：
+Haowork currently exposes three interfaces backed by the same governance projection:
 
-| 入口 | 主要用途 |
+| Interface | Primary purpose |
 | --- | --- |
-| Workbench | 查看目标、Mission、拓扑、审批、Trace、冲突和迁移预览 |
-| CLI | 初始化项目、签发 Mission、同步团队状态和执行治理操作 |
-| Local API / MCP | 为浏览器与 Agent Runtime 提供受认证、受策略约束的能力 |
+| Workbench | Inspect goals, Missions, topology, approvals, traces, conflicts, and transfer previews |
+| CLI | Initialize projects, issue Missions, synchronize team state, and perform governance operations |
+| Local API / MCP | Expose authenticated, policy-constrained capabilities to browsers and Agent runtimes |
 
-输入是人的目标、设计约束和审批决定；输出不是一段聊天摘要，而是可验证、可回放、可迁移的工程事实。
+Inputs are human goals, design constraints, and approval decisions. Outputs are not chat summaries; they are
+verifiable, replayable, and transferable engineering facts.
 
-## 🏗️ 总体架构
+## 🏗️ Architecture
 
 ```mermaid
 flowchart TB
-    HUMAN["Human Owner / 团队成员"] --> UI["Workbench · CLI · Local API"]
+    HUMAN["Human Owner / Team Member"] --> UI["Workbench · CLI · Local API"]
 
-    subgraph GOV["Haowork 软件工程治理控制面"]
+    subgraph GOV["Haowork Software Engineering Governance Plane"]
         GOAL["Requirement · GoalVersion"]
         WORK["Task · Context · Responsibility"]
         AUTH["Mission · Lease · Approval"]
@@ -137,11 +151,11 @@ flowchart TB
         SYNC <--> GOAL
     end
 
-    subgraph EXEC["AgentTeams 多智能体执行面"]
+    subgraph EXEC["AgentTeams Multi-agent Execution Plane"]
         TOPO["Manager · Delivery Leader"]
         AGENTS["Research · Build · Verify"]
-        MATRIX["Matrix v3 协作事件"]
-        OBJECT["MinIO / S3 制品"]
+        MATRIX["Matrix v3 Collaboration Events"]
+        OBJECT["MinIO / S3 Artifacts"]
         TOOLS["Higress · MCP · Skills"]
         TOPO --> AGENTS
         AGENTS --> MATRIX
@@ -149,7 +163,7 @@ flowchart TB
         AGENTS --> TOOLS
     end
 
-    subgraph SCM["Git / SCM 代码变化面"]
+    subgraph SCM["Git / SCM Code Change Plane"]
         FILES["Workspace Changes"] --> COMMITS["Commit · Push · PR"]
     end
 
@@ -162,89 +176,92 @@ flowchart TB
     FILES --> PROOF
 ```
 
-原生绑定 Git Commit、Push 与 Pull Request 是下一阶段能力，当前不会把它描述为已完成。
+Native binding to Git Commit, Push, and Pull Request is planned for the next stage and is not presented as
+complete today.
 
-## 🔄 一条需求如何流转
+## 🔄 How a Requirement Flows
 
 ```mermaid
 flowchart LR
-    A["1 人提出需求"] --> B["2 固化 GoalVersion"]
-    B --> C["3 生成 Context 与 Mission"]
-    C --> D["4 AgentTeams 建立团队"]
-    D --> E["5 Research / Build 执行"]
-    E --> F["6 Verify 形成证据"]
-    F --> G{"7 满足授权与完成条件?"}
-    G -- 是 --> H["进入项目治理状态"]
-    G -- 否 --> I["拒绝 · 冲突 · 审批 · 恢复"]
+    A["1 Human proposes a requirement"] --> B["2 Record a GoalVersion"]
+    B --> C["3 Create Context and Mission"]
+    C --> D["4 AgentTeams creates the team"]
+    D --> E["5 Research / Build execute"]
+    E --> F["6 Verify produces evidence"]
+    F --> G{"7 Authorization and completion conditions met?"}
+    G -- Yes --> H["Commit to governed project state"]
+    G -- No --> I["Reject · Conflict · Approve · Recover"]
 ```
 
-每一步都有输入、责任主体与失败出口。Agent 的输出不能自行变成“完成”；候选结果必须同时满足
-授权、制品摘要、独立验证和必要审批。
+Every step has an input, an accountable subject, and a failure exit. Agent output cannot declare itself complete.
+A candidate result must satisfy authorization, artifact digest, independent verification, and required approvals.
 
-## 🪪 多人团队的四维身份模型
+## 🪪 Four-dimensional Identity Model for Teams
 
-Haowork 不用一个模糊的 `role` 同时表达用户权限、Agent 职能和运行时身份，而是拆成四个正交维度：
+Haowork does not use one ambiguous `role` to represent user authority, Agent function, and runtime identity.
+It separates four orthogonal dimensions:
 
-| 维度 | 示例 | 回答的问题 |
+| Dimension | Examples | Question answered |
 | --- | --- | --- |
-| SubjectKind | Human / Agent | 行为主体是什么 |
-| GovernanceRole | Owner / Lead / Reviewer / Agent | 谁能决策与审批 |
-| AgentFunction | Manager / Leader / Research / Build / Verify | Agent 承担什么交付职能 |
-| RuntimeBinding | Environment / Instance / Principal / Room / Revision | 当前由哪个运行载体执行 |
+| SubjectKind | Human / Agent | What kind of subject performed the action? |
+| GovernanceRole | Owner / Lead / Reviewer / Agent | Who may decide and approve? |
+| AgentFunction | Manager / Leader / Research / Build / Verify | What delivery function does the Agent perform? |
+| RuntimeBinding | Environment / Instance / Principal / Room / Revision | Which runtime currently executes the logical Agent? |
 
-RuntimeBinding 变化会生成新 Revision，旧绑定仍保留；Build 与 Verify 必须由不同逻辑 Agent 承担；
-高风险请求不能由请求人自批。
+A RuntimeBinding change creates a new Revision while preserving earlier bindings. Build and Verify must be
+performed by different logical Agents, and a requester cannot self-approve a high-risk request.
 
-## 🤝 Haowork 与 AgentTeams 如何分工
+## 🤝 How Haowork and AgentTeams Work Together
 
-| 层面 | Haowork | AgentTeams v1.2.2 |
+| Layer | Haowork | AgentTeams v1.2.2 |
 | --- | --- | --- |
-| 决策与授权 | GoalVersion、Mission、Lease、Scope、Approval | 消费已经授权的 Mission |
-| 团队组织 | 规定角色、责任和运行时绑定 | 创建 Manager、Worker、Team、Human CRD |
-| 协作执行 | 校验边界并接收结果 | Manager 拆解 WorkItem，角色 Agent 协同执行 |
-| 消息与制品 | 校验 Mission、环境、摘要和归属 | Matrix 传递事件，MinIO/S3 保存制品 |
-| 工具调用 | Policy Runtime、MCP 认证、Skill 审计 | Higress 提供 Consumer 与 Route 基础设施 |
-| 完成判定 | Verify、Evidence、审批和冲突处置 | 不自行修改 Goal 或判定治理完成 |
+| Decision and authorization | GoalVersion, Mission, Lease, Scope, Approval | Consumes an authorized Mission |
+| Team organization | Defines roles, responsibility, and runtime bindings | Creates Manager, Worker, Team, and Human CRDs |
+| Collaborative execution | Validates boundaries and receives results | Manager decomposes WorkItems and role Agents execute them |
+| Messages and artifacts | Validates Mission, environment, digest, and ownership | Matrix carries events and MinIO/S3 stores artifacts |
+| Tool invocation | Policy Runtime, MCP authentication, Skill audit | Higress provides Consumer and Route infrastructure |
+| Completion decision | Verify, Evidence, approval, and conflict resolution | Does not alter the Goal or declare governance completion |
 
-### AgentTeams 角色如何落地
+### How AgentTeams Roles Are Applied
 
-| 角色 | 在 Haowork 数据流中的职责 |
+| Role | Responsibility in the Haowork data flow |
 | --- | --- |
-| Manager | 接收 Mission、管理团队拓扑、委派 WorkItem |
-| Delivery Leader | 协调交付节奏和角色间依赖，不拥有最终审批权 |
-| Research | 收集约束、方案与外部证据，不直接改写治理事实 |
-| Build | 在授权 Scope 内实现并产生工作区摘要与制品 |
-| Verify | 独立验证 Build 结果，形成可审计 Evidence |
-| Human Owner | 决定目标、拓扑、高风险审批和冲突处置 |
+| Manager | Receives a Mission, manages team topology, and delegates WorkItems |
+| Delivery Leader | Coordinates delivery cadence and inter-role dependencies without owning final approval |
+| Research | Collects constraints, options, and external evidence without rewriting governance facts |
+| Build | Implements within authorized Scope and produces workspace digests and artifacts |
+| Verify | Independently validates Build output and produces auditable Evidence |
+| Human Owner | Decides goals, topology, high-risk approvals, and conflict resolution |
 
-官方模块对应关系：CRD 管理团队拓扑；Matrix v3 传递委派与状态事件；MinIO/S3 保存受摘要约束的
-制品；Higress 检查 Consumer、Route 与 MCP 绑定；MCP 将 Haowork Skills 暴露给受认证 Runtime。
+Official module mapping: CRDs manage team topology; Matrix v3 carries delegation and status events; MinIO/S3
+stores digest-bound artifacts; Higress validates Consumer, Route, and MCP bindings; MCP exposes Haowork Skills
+to authenticated runtimes.
 
-## 🛠️ Skill 工程体系
+## 🛠️ Skill Engineering System
 
-Haowork Skills 不是提示词清单，而是带版本、输入 Schema、权限、风险级别、审计记录和失败码的
-治理工具。目前注册 11 个 canonical Skills，覆盖：
+Haowork Skills are not a prompt catalog. Each Skill has a version, input Schema, permissions, risk level, audit
+records, and failure codes. The current registry contains 11 canonical Skills:
 
-- **Core Skills：** `plan`、`context`、`history`、`record`、`verify`、`export`、`import`
-- **Cross-zone Skills：** `advisory`、`mirror`、`patch`、`audit`
+- **Core Skills:** `plan`, `context`, `history`, `record`, `verify`, `export`, `import`
+- **Cross-zone Skills:** `advisory`, `mirror`, `patch`, `audit`
 
-一次 Skill 调用必须经过 RuntimeBinding、Mission、Lease、Scope、风险策略和输入 Schema 校验；
-Trace Ledger 或 Audit 不可用时失败关闭。
+Every Skill call must pass RuntimeBinding, Mission, Lease, Scope, risk-policy, and input-Schema checks.
+If the Trace Ledger or Audit capability is unavailable, execution fails closed.
 
-## ✅ 当前已实现
+## ✅ Implemented Today
 
-- Requirement、GoalVersion、Task、Context、Lease、Mission 与风险分级审批。
-- Logical Agent、Agent Function、运行时主体和 AgentTeams 实例的正交身份绑定。
-- AgentTeams `v1.2.2` 官方 CRD、Matrix v3、MinIO/S3、Higress 与 MCP 适配合同。
-- 独立 Trace Ledger、Evidence、Workspace Digest 与执行恢复游标。
-- Team Sync、离线 Outbox、幂等对账和显式领域冲突处置。
-- 签名 Capsule 的白名单导出、内存预览、审批导入和目标环境重新绑定。
-- CLI、Local API 与 Workbench 的治理视图和操作入口。
+- Requirement, GoalVersion, Task, Context, Lease, Mission, and risk-tiered approvals.
+- Orthogonal bindings among Logical Agent, Agent Function, runtime principal, and AgentTeams instance.
+- AgentTeams `v1.2.2` official CRD, Matrix v3, MinIO/S3, Higress, and MCP integration contracts.
+- Independent Trace Ledger, Evidence, Workspace Digest, and execution recovery cursors.
+- Team Sync, offline Outbox, idempotent reconciliation, and explicit domain conflict resolution.
+- Allowlisted signed Capsule export, in-memory preview, approved import, and target-environment rebinding.
+- CLI, Local API, and Workbench interfaces for governance views and operations.
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-基础环境：Go `1.26.5`、Node.js `24.14.0` 和 npm。AgentTeams 集群验证还需要 Docker Desktop、
-Kind、Helm 与 kubectl。
+Base requirements: Go `1.26.5`, Node.js `24.14.0`, and npm. AgentTeams cluster validation additionally requires
+Docker Desktop, Kind, Helm, and kubectl.
 
 ```powershell
 npm ci --prefix web
@@ -256,58 +273,62 @@ go test ./... -count=1
 go build -trimpath -o bin/haowork.exe ./cmd/haowork
 ```
 
-初始化并查看一个项目：
+Initialize and inspect a project:
 
 ```powershell
 .\bin\haowork.exe init `
   --project .\example-project `
   --name example `
   --actor USR-OWNER `
-  --goal "交付可审计的软件变更" `
-  --done-when "验证通过并完成审批" `
+  --goal "Deliver auditable software changes" `
+  --done-when "Verification passes and approval is complete" `
   --json
 
 .\bin\haowork.exe status --project .\example-project --json
 .\bin\haowork.exe serve .\example-project
 ```
 
-双区部署配置模板位于
-[`deploy/agentteams/v1.2.2/.env.example`](deploy/agentteams/v1.2.2/.env.example)。
-本地 `.env.local` 已被 Git 忽略，不得提交 API Key、Token、私钥、Kubeconfig 或云凭据。
+The dual-zone deployment template is located at
+[`deploy/agentteams/v1.2.2/.env.example`](deploy/agentteams/v1.2.2/.env.example).
+Local `.env.local` files are ignored by Git. Never commit API keys, tokens, private keys, kubeconfig files,
+or cloud credentials.
 
-只读演示站 [haowork.112318.xyz](https://haowork.112318.xyz/) 已上线。它用于浏览预置项目、拓扑、
-需求链、审批、Trace 与迁移流程；服务端不提供写操作，也不替代真实双区 E2E 证据。
+The read-only demo at [haowork.112318.xyz](https://haowork.112318.xyz/) is online. It presents a preloaded
+project, topology, requirement chain, approvals, traces, and transfer flow. It provides no write operation and
+does not replace evidence from a real dual-zone E2E run.
 
-## 🧪 验证边界
+## 🧪 Verification Boundaries
 
-| 验证类型 | 当前能够证明什么 |
+| Verification type | What it proves today |
 | --- | --- |
-| Go、Web 与领域 E2E | 本地治理、同步、恢复、冲突、API 与 Workbench 合同 |
-| AgentTeams 适配器测试 | 官方 CRD、Matrix、S3、Higress、MCP 的结构与失败关闭行为 |
-| Kind / Helm 合同测试 | 部署脚本、镜像锁、网络策略和清理安全边界 |
-| 真实双区 E2E | 只有使用真实镜像、模型、Core Bridge、Matrix、MinIO/S3 与 Higress 才能成立 |
+| Go, Web, and domain E2E | Local governance, sync, recovery, conflict, API, and Workbench contracts |
+| AgentTeams adapter tests | Structure and fail-closed behavior for official CRD, Matrix, S3, Higress, and MCP interfaces |
+| Kind / Helm contract tests | Deployment scripts, image locks, network policies, and cleanup safety boundaries |
+| Real dual-zone E2E | Valid only with real images, models, Core Bridge, Matrix, MinIO/S3, and Higress |
 
-本地测试通过不等于真实双区部署已经完成。真实依赖缺失时，验收脚本必须返回 `BLOCKED_*`。
-详细状态参阅 [AgentTeams 集成边界](docs/agentteams.md)。
+Passing local tests does not prove that a real dual-zone deployment is complete. When real dependencies are
+missing, acceptance scripts must return `BLOCKED_*`. See
+[AgentTeams Integration Boundaries](docs/agentteams.md) for details.
 
-## 🗺️ 下一阶段
+## 🗺️ Next Stage
 
-- 将 Requirement、Mission 与 Evidence 同 Git Commit、Push、Pull Request 原生绑定。
-- 完善需求版本、架构约束、责任矩阵与偏差审查的 Workbench 体验。
-- 增强 GoalVersion 漂移分析和面向重构的影响范围查询。
-- 完成旧项目基线导入、候选关系分析和人工确认流程。
-- 在完整官方镜像、凭据与模型环境中取得真实双区 E2E 和可复验基准证据。
+- Bind Requirements, Missions, and Evidence natively to Git Commit, Push, and Pull Request records.
+- Improve Workbench views for requirement versions, architecture constraints, responsibility matrices, and drift review.
+- Expand GoalVersion drift analysis and impact queries for refactoring decisions.
+- Complete legacy-project baseline import, candidate relationship analysis, and human confirmation workflows.
+- Produce reproducible real dual-zone E2E and benchmark evidence with the complete official image, credential,
+  and model environment.
 
-## 📚 文档
+## 📚 Documentation
 
-- [产品设计与工程治理模型](docs/product-design.md)
-- [AgentTeams 集成边界](docs/agentteams.md)
-- [CLI 使用说明](docs/cli.md)
-- [Workbench 使用说明](docs/workbench.md)
-- [AgentTeams v1.2.2 部署说明](deploy/agentteams/v1.2.2/README.md)
-- [安全策略](SECURITY.md)
-- [贡献指南](CONTRIBUTING.md)
+- [Product Design and Engineering Governance Model](docs/product-design.md)
+- [AgentTeams Integration Boundaries](docs/agentteams.md)
+- [CLI Guide](docs/cli.md)
+- [Workbench Guide](docs/workbench.md)
+- [AgentTeams v1.2.2 Deployment Guide](deploy/agentteams/v1.2.2/README.md)
+- [Security Policy](SECURITY.md)
+- [Contributing Guide](CONTRIBUTING.md)
 
-## 📄 许可证
+## 📄 License
 
-Haowork 采用 [Apache License 2.0](LICENSE) 开源。
+Haowork is licensed under the [Apache License 2.0](LICENSE).
