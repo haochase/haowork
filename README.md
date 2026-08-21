@@ -27,8 +27,10 @@ English version | [中文版](README_cn.md)
 > **Project status: early preview.** The repository implements governance facts, Missions, risk approvals,
 > execution traces, team synchronization, signed transfers, governed local Git Commit provenance, and an
 > AgentTeams `v1.2.2` integration contract.
-> A real dual-zone deployment still requires the complete official image set, runtime credentials, model
-> services, and Core Bridge. Missing dependencies produce explicit `BLOCKED_*` results rather than simulated success.
+> The official image inventory and a local Kind dual-namespace run were verified on 2026-08-16, including
+> the Core Bridge, Matrix, S3, Higress MCP, network isolation, and restart recovery. A physical
+> Windows/Ubuntu offline transfer and the A/B/C/D benchmark remain unverified; missing dependencies still
+> produce explicit `BLOCKED_*` results rather than simulated success.
 
 ## 🎬 Online Read-only Demo
 

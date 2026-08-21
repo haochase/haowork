@@ -143,13 +143,18 @@ Haowork 能可靠追踪由自身记录的需求和执行链。面对旧项目，
 - CLI、Local API、Workbench 和部署合同测试。
 - 本地 Git Commit 只读观察、治理绑定、风险审批、回放与历史可达性失效。
 
-### 尚需真实环境证明
+### 已取得的本机集群证据
 
-- 官方 AgentTeams 完整镜像清单和摘要锁定；
-- 双命名空间或双设备的真实运行；
-- 远端受认证 Core Bridge；
-- Matrix、MinIO/S3、Higress、模型服务的完整数据路径；
-- 断网、重启、恢复和回迁的一次完整 E2E 证据。
+- 官方 AgentTeams `v1.2.2` 活跃镜像和渲染 inventory 已锁定到独立 digest；
+- 2026-08-16 完成 Kind Public/Internal 双命名空间真实组件运行；
+- 五角色拓扑、受认证 Core Bridge、Matrix、MinIO/S3 和 Higress MCP 数据链已验证；
+- 双向 NetworkPolicy 拒绝、opaque cursor 和重启后无重复治理事件已进入脱敏证据。
+
+### 尚需物理环境与效果证明
+
+- Windows Public 与 Ubuntu Internal 在业务网络断开时的签名 Capsule/Return 人工交接；
+- 物理环境断电、恢复、回迁冲突和最终合并的一次完整 E2E；
+- A/B/C/D 每臂至少三次真实运行和可从签名原始事实重算的报告。
 
 ### 下一阶段工程
 
