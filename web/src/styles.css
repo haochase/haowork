@@ -49,3 +49,45 @@ label, legend { color: #5e7279; font-size: 12px; font-weight: 600; }label { disp
 .governance-panel li { align-items: center; display: flex; flex-wrap: wrap; gap: .6rem; padding: .4rem 0; }
 .governance-panel li span { color: #5b6573; }
 .governance-panel code { color: #46505c; font-size: .78rem; overflow-wrap: anywhere; }
+.scm-panel { overflow: hidden; background: #f9fbfb; border: 1px solid #d6e0e2; border-radius: 7px; box-shadow: 0 7px 20px rgb(36 58 69 / 5%); }
+.scm-repository-strip { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 24px; margin: 0; padding: 12px 18px; border-bottom: 1px solid #e3eaeb; background: #f1f6f6; }
+.scm-repository-strip > div { display: grid; gap: 3px; }
+.scm-repository-strip dt { color: #718288; font-size: 11px; }
+.scm-repository-strip dd { margin: 0; color: #30464c; font-weight: 700; }
+.scm-history-action { display: flex; align-items: end; gap: 6px; margin-left: auto; }
+.scm-history-action label { min-width: 190px; }
+.scm-layout { display: grid; grid-template-columns: minmax(190px, 32%) minmax(0, 1fr); min-height: 260px; }
+.scm-commit-list { max-height: 430px; overflow: auto; margin: 0; padding: 8px; border-right: 1px solid #e3eaeb; list-style: none; }
+.scm-commit-list button { display: grid; width: 100%; gap: 5px; padding: 10px; border: 0; border-radius: 4px; background: transparent; color: #344b53; text-align: left; }
+.scm-commit-list button:hover, .scm-commit-list button.selected { background: #e8f1f2; }
+.scm-commit-list button > span { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+.scm-commit-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scm-commit-list small, .scm-path-count { color: #71848a; font-size: 11px; }
+.scm-detail { display: grid; align-content: start; gap: 14px; min-width: 0; padding: 16px 18px; }
+.scm-detail h3 { margin-top: 4px; font-size: 16px; }
+.scm-change-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.scm-change-list li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; padding: 5px 0; border-top: 1px solid #e6ecec; }
+.scm-change-list span { color: #667d84; font-size: 11px; text-transform: uppercase; }
+.scm-change-list code { overflow-wrap: anywhere; }
+.scm-binding-list { display: grid; gap: 10px; }
+.scm-binding-list article { display: grid; gap: 10px; padding: 12px; border: 1px solid #d9e3e4; border-radius: 5px; background: #fff; }
+.scm-binding-list article.invalidated { border-color: #e8bdb5; background: #fff5f2; }
+.scm-state { padding: 3px 6px; border: 1px solid #d7e0e2; border-radius: 3px; color: #5b6f75; font-size: 10px; white-space: nowrap; }
+.scm-state.confirmed, .scm-state.observed { border-color: #bfdfd0; background: #e7f4ee; color: #2b7659; }
+.scm-state.superseded, .scm-state.invalidated, .scm-state.rejected { border-color: #e8bdb5; background: #fff5f2; color: #a84739; }
+.scm-decision { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding-top: 10px; border-top: 1px solid #e3eaeb; }
+.scm-decision .confirm-row { grid-column: 1 / -1; }
+.scm-decision input { min-width: 0; }
+@media (max-width: 760px) {
+  body { min-width: 0; }
+  .workbench-shell { padding: 10px; }
+  .overview-band, .workbench-grid { grid-template-columns: 1fr; }
+  .project-tree, .action-column { position: static; }
+  .scm-repository-strip, .scm-history-action { align-items: stretch; }
+  .scm-history-action { width: 100%; margin-left: 0; }
+  .scm-history-action label { min-width: 0; flex: 1; }
+  .scm-layout { grid-template-columns: 1fr; }
+  .scm-commit-list { max-height: 240px; border-right: 0; border-bottom: 1px solid #e3eaeb; }
+  .scm-decision { grid-template-columns: 1fr; }
+  .scm-decision .confirm-row { grid-column: auto; }
+}

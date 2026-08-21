@@ -219,6 +219,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(teamPath+"/conflicts", s.handleTeamConflicts)
 	mux.HandleFunc(teamPath+"/conflicts/", s.handleTeamConflictAction)
 	s.registerAgentTeamsRoutes(mux)
+	s.registerSCMRoutes(mux)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.isClosed() {

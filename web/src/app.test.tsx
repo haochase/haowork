@@ -27,5 +27,13 @@ describe("Team Workbench integration", () => {
     expect(html).toContain("LEASE-1");
     expect(html).toContain("离线同步队列");
     expect(html).toContain("冲突处置台");
+    expect(html).toContain("代码关联");
+  });
+
+  it("keeps SCM mutation controls hidden in read-only mode", () => {
+    const client = { subscribe: vi.fn(() => () => undefined) } as unknown as ApiClient;
+    const html = renderToStaticMarkup(<App client={client} initialState={emptyState} readOnly />);
+    expect(html).toContain("代码关联");
+    expect(html).not.toContain("注册仓库");
   });
 });

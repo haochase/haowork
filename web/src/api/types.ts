@@ -336,3 +336,70 @@ export interface SkillDefinition { name: string; version: string; risk: string; 
 export interface TraceEnvelope { sequence: number; id: string; mission_id: string; governance_task_id: string; work_item_id: string; run_id: string; logical_actor_id: string; runtime_binding_revision: number; agent_function?: string; environment_id: string; source_event_type: string; skill_name?: string; skill_version?: string; status: string; error_code?: string; started_at: string; finished_at?: string; }
 export interface ApprovalRequest { id: string; subject_type: string; subject_id: string; payload_sha256: string; risk_level: string; requester_id: string; decider_id?: string; status: string; decision_reason?: string; requested_at: string; decided_at?: string; }
 export interface TransferPreview { preview_hash: string; manifest: Record<string, unknown>; rebind_required: Array<Record<string, unknown>>; }
+
+export interface SCMRepository {
+  id: string;
+  project_id: string;
+  provider: "local-git";
+  object_format: "sha1" | "sha256";
+  remote_fingerprint?: string;
+  registered_at: string;
+}
+
+export interface SCMFileChange {
+  path: string;
+  previous_path?: string;
+  status: "added" | "deleted" | "modified" | "type_changed" | "renamed" | "copied";
+  old_blob_oid?: string;
+  new_blob_oid?: string;
+}
+
+export interface CommitObservation {
+  repository_id: string;
+  commit_oid: string;
+  tree_oid: string;
+  parent_oids: string[];
+  author_name: string;
+  author_email_sha256: string;
+  committer_name: string;
+  committer_email_sha256: string;
+  authored_at: string;
+  committed_at: string;
+  message: string;
+  changes: SCMFileChange[];
+}
+
+export interface SCMBinding {
+  id: string;
+  repository_id: string;
+  commit_oid: string;
+  project_id: string;
+  goal_version: number;
+  task_ids: string[];
+  mission_id: string;
+  evidence_ids: string[];
+  trace_ids: string[];
+  scoped_changes: string[];
+  status: "proposed" | "confirmed" | "rejected" | "invalidated";
+  confirmed_by?: string;
+  confirmed_at?: string;
+  policy_version: string;
+}
+
+export interface SCMCommit {
+  observation: CommitObservation;
+  status: "observed" | "superseded";
+}
+
+export interface SCMStatus {
+  repositories: SCMRepository[];
+  commits: SCMCommit[];
+  bindings: SCMBinding[];
+}
+
+export interface SCMHistoryReport {
+  checked: number;
+  reachable: number;
+  superseded: number;
+  invalidated: number;
+}

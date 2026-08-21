@@ -63,6 +63,74 @@ func (c *Client) Status(ctx context.Context) (model.ProjectState, error) {
 	return response, nil
 }
 
+func (c *Client) SCMStatus(ctx context.Context) (SCMStatusResponse, error) {
+	var response SCMStatusResponse
+	if err := c.doJSON(ctx, http.MethodGet, scmPath+"/status", nil, &response); err != nil {
+		return SCMStatusResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RegisterSCM(ctx context.Context, actor model.Actor) (model.SCMRepository, error) {
+	var response model.SCMRepository
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/register", actorPayload{Actor: actor}, &response); err != nil {
+		return model.SCMRepository{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ObserveSCMCommit(ctx context.Context, repositoryID, commitOID string, actor model.Actor) (model.CommitObservation, error) {
+	var response model.CommitObservation
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/commits/observe", scmObserveRequest{RepositoryID: repositoryID, CommitOID: commitOID, Actor: actor}, &response); err != nil {
+		return model.CommitObservation{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) SCMCommit(ctx context.Context, commitOID string) (SCMCommitResponse, error) {
+	var response SCMCommitResponse
+	if err := c.doJSON(ctx, http.MethodGet, scmPath+"/commits/"+url.PathEscape(commitOID), nil, &response); err != nil {
+		return SCMCommitResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ProposeSCMBinding(ctx context.Context, input app.ProposeSCMBindingInput) (model.SCMBinding, error) {
+	var response model.SCMBinding
+	request := scmBindingRequest{
+		RepositoryID: input.RepositoryID, CommitOID: input.CommitOID, TaskIDs: input.TaskIDs,
+		MissionID: input.MissionID, EvidenceIDs: input.EvidenceIDs, TraceIDs: input.TraceIDs, Actor: input.Actor,
+	}
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/bindings", request, &response); err != nil {
+		return model.SCMBinding{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ConfirmSCMBinding(ctx context.Context, bindingID string, actor model.Actor) (model.SCMBinding, error) {
+	var response model.SCMBinding
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/bindings/"+url.PathEscape(bindingID)+"/confirm", scmBindingDecisionRequest{Actor: actor}, &response); err != nil {
+		return model.SCMBinding{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RejectSCMBinding(ctx context.Context, bindingID, reason string, actor model.Actor) (model.SCMBinding, error) {
+	var response model.SCMBinding
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/bindings/"+url.PathEscape(bindingID)+"/reject", scmBindingDecisionRequest{Reason: reason, Actor: actor}, &response); err != nil {
+		return model.SCMBinding{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) VerifySCMHistory(ctx context.Context, repositoryID string, refs []string, actor model.Actor) (app.SCMHistoryReport, error) {
+	var response app.SCMHistoryReport
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/history/verify", scmHistoryRequest{RepositoryID: repositoryID, Refs: refs, Actor: actor}, &response); err != nil {
+		return app.SCMHistoryReport{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) Approve(ctx context.Context, requirementID string, actor model.Actor) error {
 	return c.doJSON(ctx, http.MethodPost, requirementsPath+"/"+url.PathEscape(requirementID)+"/approve", actorPayload{Actor: actor}, nil)
 }

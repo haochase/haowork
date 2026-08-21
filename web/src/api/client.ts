@@ -19,7 +19,17 @@ import type {
   TeamStatus,
   TeamSyncReport,
   VerifyRequest,
-  MissionEnvelope, AgentTopology, SkillDefinition, TraceEnvelope, ApprovalRequest, TransferPreview,
+  MissionEnvelope,
+  AgentTopology,
+  SkillDefinition,
+  TraceEnvelope,
+  ApprovalRequest,
+  TransferPreview,
+  SCMStatus,
+  SCMRepository,
+  CommitObservation,
+  SCMBinding,
+  SCMHistoryReport,
 } from "./types";
 
 const API_PREFIX = "/api/v1";
@@ -75,6 +85,21 @@ export interface ApiClient {
   previewTransfer?(archive: Uint8Array | string): Promise<TransferPreview>;
   applyTransfer?(previewHash: string, actor: Actor, confirmed: boolean): Promise<void>;
   rebindAgent?(id: string, binding: Record<string, unknown>, actor: Actor, confirmed: boolean): Promise<Record<string, unknown>>;
+  getSCMStatus?(): Promise<SCMStatus>;
+  registerSCM?(actor: Actor): Promise<SCMRepository>;
+  observeSCMCommit?(repositoryId: string, commitOid: string, actor: Actor): Promise<CommitObservation>;
+  proposeSCMBinding?(input: {
+    repository_id: string;
+    commit_oid: string;
+    task_ids: string[];
+    mission_id: string;
+    evidence_ids: string[];
+    trace_ids: string[];
+    actor: Actor;
+  }): Promise<SCMBinding>;
+  confirmSCMBinding?(id: string, actor: Actor): Promise<SCMBinding>;
+  rejectSCMBinding?(id: string, reason: string, actor: Actor): Promise<SCMBinding>;
+  verifySCMHistory?(repositoryId: string, refs: string[], actor: Actor): Promise<SCMHistoryReport>;
 }
 
 export interface EventSourceLike {
@@ -238,6 +263,13 @@ export function createApiClient(options: ClientOptions = {}): ApiClient {
     previewTransfer: (archive) => { const value = typeof archive === "string" ? archive : btoa(String.fromCharCode(...archive)); return request<TransferPreview>(fetcher, `${API_PREFIX}/transfers/preview`, jsonBody({ archive: value })); },
     applyTransfer: (previewHash, actor, confirmed) => request<void>(fetcher, `${API_PREFIX}/transfers/${encodeURIComponent(previewHash)}/apply`, jsonBody({ preview_hash: previewHash, actor, confirmed })),
     rebindAgent: (id, binding, actor, confirmed) => request<Record<string, unknown>>(fetcher, `${API_PREFIX}/agents/${encodeURIComponent(id)}/rebind`, jsonBody({ binding, actor, confirmed })),
+    getSCMStatus: () => request<SCMStatus>(fetcher, `${API_PREFIX}/scm/status`),
+    registerSCM: (actor) => request<SCMRepository>(fetcher, `${API_PREFIX}/scm/register`, jsonBody({ actor })),
+    observeSCMCommit: (repositoryId, commitOid, actor) => request<CommitObservation>(fetcher, `${API_PREFIX}/scm/commits/observe`, jsonBody({ repository_id: repositoryId, commit_oid: commitOid, actor })),
+    proposeSCMBinding: (input) => request<SCMBinding>(fetcher, `${API_PREFIX}/scm/bindings`, jsonBody(input)),
+    confirmSCMBinding: (id, actor) => request<SCMBinding>(fetcher, `${API_PREFIX}/scm/bindings/${encodeURIComponent(id)}/confirm`, jsonBody({ actor })),
+    rejectSCMBinding: (id, reason, actor) => request<SCMBinding>(fetcher, `${API_PREFIX}/scm/bindings/${encodeURIComponent(id)}/reject`, jsonBody({ reason, actor })),
+    verifySCMHistory: (repositoryId, refs, actor) => request<SCMHistoryReport>(fetcher, `${API_PREFIX}/scm/history/verify`, jsonBody({ repository_id: repositoryId, refs, actor })),
 
     subscribe: (onChange) => {
       let closed = false;

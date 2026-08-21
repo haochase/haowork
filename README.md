@@ -25,7 +25,8 @@ English version | [中文版](README_cn.md)
 </p>
 
 > **Project status: early preview.** The repository implements governance facts, Missions, risk approvals,
-> execution traces, team synchronization, signed transfers, and an AgentTeams `v1.2.2` integration contract.
+> execution traces, team synchronization, signed transfers, governed local Git Commit provenance, and an
+> AgentTeams `v1.2.2` integration contract.
 > A real dual-zone deployment still requires the complete official image set, runtime credentials, model
 > services, and Core Bridge. Missing dependencies produce explicit `BLOCKED_*` results rather than simulated success.
 
@@ -164,7 +165,8 @@ flowchart TB
     end
 
     subgraph SCM["Git / SCM Code Change Plane"]
-        FILES["Workspace Changes"] --> COMMITS["Commit · Push · PR"]
+        FILES["Workspace Changes"] --> COMMITS["Observed local Commit"]
+        COMMITS --> BINDING["Goal · Task · Mission · Evidence binding"]
     end
 
     UI --> GOAL
@@ -176,8 +178,30 @@ flowchart TB
     FILES --> PROOF
 ```
 
-Native binding to Git Commit, Push, and Pull Request is planned for the next stage and is not presented as
-complete today.
+The first native SCM slice binds an explicitly selected, immutable local Git Commit to Goal, Task, Mission, and
+projected Evidence. Push, Pull Request, webhook, and hosted-provider integrations remain future work and are not
+presented as complete.
+
+## 🔗 Governed Git Commit Provenance
+
+Haowork does not create or push commits. A developer or delivery tool creates the commit through the normal Git
+workflow, then explicitly asks Haowork to observe and bind its immutable object facts:
+
+```text
+local Git repository -> full Commit OID -> read-only object inspection
+  -> proposed Goal / Task / Mission / Evidence relationship
+  -> risk-based human approval -> confirmed binding
+  -> reachability recheck -> superseded / invalidated when history diverges
+```
+
+- The event ledger stores object IDs, author/committer display names, email digests, message, and changed paths.
+- It does not store raw email addresses, remote URLs, source code, patches, credentials, or private repository paths.
+- L2/L3 confirmation requires a hash-bound approval; Build cannot self-confirm a high-risk relationship.
+- A confirmed binding never completes a Task. Existing Evidence and completion gates remain authoritative.
+- Force-moved or otherwise unreachable commits remain in append-only history and their bindings become invalid.
+
+Use `haowork scm --help` or the Workbench **Git / SCM** panel. See
+[`docs/scm-provenance.md`](docs/scm-provenance.md) for the exact policy and current boundaries.
 
 ## 🔄 How a Requirement Flows
 

@@ -31,6 +31,7 @@ jobs:
       - run: go test ./internal/e2e -run TestOfflineWorkbenchAndCLIShareGovernedState -count=1
       - run: go test ./internal/e2e -run TestP003ContextEvidenceExecutorAndReplay -count=1
       - run: go test ./internal/e2e -run TestP004 -count=1
+      - run: go test ./internal/e2e -run TestP006SCM -count=1
       - run: gofmt -w cmd internal
       - shell: bash
         run: git diff --exit-code
@@ -58,5 +59,7 @@ jobs:
       - run: npm run build --prefix web
       - run: go test ./internal/e2e -run TestP003ContextEvidenceExecutorAndReplay -count=1
       - run: go test ./internal/e2e -run TestP004 -count=1
+      - run: go test ./internal/e2e -run TestP006SCM -count=1
+      - run: go test -race ./internal/scm ./internal/app -count=1
       - run: go test ./... -race -count=1
       - run: go test ./internal/benchmark -count=1
