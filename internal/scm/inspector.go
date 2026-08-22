@@ -412,12 +412,12 @@ func sanitizeRemoteURL(value string) string {
 }
 
 func samePath(left, right string) bool {
-	leftAbsolute, leftErr := filepath.Abs(left)
-	rightAbsolute, rightErr := filepath.Abs(right)
+	leftResolved, leftErr := canonicalPath(left)
+	rightResolved, rightErr := canonicalPath(right)
 	if leftErr != nil || rightErr != nil {
 		return false
 	}
-	return strings.EqualFold(filepath.Clean(leftAbsolute), filepath.Clean(rightAbsolute))
+	return strings.EqualFold(filepath.Clean(leftResolved), filepath.Clean(rightResolved))
 }
 
 func objectIDLength(format string) (int, error) {
