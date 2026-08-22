@@ -38,7 +38,7 @@ Requirement
   -> AgentTeams Run
   -> Trace + Evidence + Artifact
   -> File Attribution + Workspace Digest
-  -> Commit / Push / Pull Request（下一阶段）
+  -> Observed Commit + Governed Binding
 ```
 
 - **Requirement**：人明确提出的需求及其验收条件。
@@ -49,6 +49,8 @@ Requirement
 - **Lease / Approval**：执行权限、时限、范围和高风险人工决策。
 - **Trace / Evidence**：策略判断、调用生命周期、验证结果和制品摘要。
 - **File Attribution / Workspace Digest**：执行结果与工作区变化之间的当前关联边界。
+- **Observed Commit / Governed Binding**：只读解析不可变本地 Git Commit，并将其与目标版本、任务、
+  Mission 和已投影 Evidence 建立经审批关系；不等同于 Push 或 Pull Request 集成。
 
 ## 4. 三层责任模型
 
@@ -64,8 +66,9 @@ Requirement
 
 ### 4.3 Git / SCM 代码变更面
 
-负责文件版本、分支、提交和协作开发。Haowork 当前记录文件归属与工作区摘要；下一阶段将原生
-绑定 Commit、Push 和 Pull Request，使“需求到代码”的链路闭合到 SCM 对象。
+负责文件版本、分支、提交和协作开发。Haowork 当前记录文件归属与工作区摘要，并可显式观察本地
+Commit、提出治理绑定、按 Mission 风险审批确认，以及在 Commit 不再由可信引用可达时使绑定失效。
+Push、Pull Request、webhook 与托管平台 API 尚未接入。
 
 ## 5. 关键设计原则
 
@@ -138,18 +141,24 @@ Haowork 能可靠追踪由自身记录的需求和执行链。面对旧项目，
 - 签名跨区 Capsule；
 - AgentTeams `v1.2.2` 控制面与数据面适配；
 - CLI、Local API、Workbench 和部署合同测试。
+- 本地 Git Commit 只读观察、治理绑定、风险审批、回放与历史可达性失效。
 
-### 尚需真实环境证明
+### 已取得的本机集群证据
 
-- 官方 AgentTeams 完整镜像清单和摘要锁定；
-- 双命名空间或双设备的真实运行；
-- 远端受认证 Core Bridge；
-- Matrix、MinIO/S3、Higress、模型服务的完整数据路径；
-- 断网、重启、恢复和回迁的一次完整 E2E 证据。
+- 官方 AgentTeams `v1.2.2` 活跃镜像和渲染 inventory 已锁定到独立 digest；
+- 2026-08-16 完成 Kind Public/Internal 双命名空间真实组件运行；
+- 五角色拓扑、受认证 Core Bridge、Matrix、MinIO/S3 和 Higress MCP 数据链已验证；
+- 双向 NetworkPolicy 拒绝、opaque cursor 和重启后无重复治理事件已进入脱敏证据。
+
+### 尚需物理环境与效果证明
+
+- Windows Public 与 Ubuntu Internal 在业务网络断开时的签名 Capsule/Return 人工交接；
+- 物理环境断电、恢复、回迁冲突和最终合并的一次完整 E2E；
+- A/B/C/D 每臂至少三次真实运行和可从签名原始事实重算的报告。
 
 ### 下一阶段工程
 
-- Git Commit/Push/PR 原生绑定；
+- Git Push、Pull Request 与托管平台只读元数据绑定；
 - 面向需求版本与架构约束的可视化审查；
 - GoalVersion 漂移和重构影响分析；
 - 旧项目基线导入与人工确认；

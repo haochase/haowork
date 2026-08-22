@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { bootstrapSession, createApiClient, type ApiClient } from "./api/client";
-import type { Actor, AgentTopology, ApprovalRequest, MissionEnvelope, ProjectResponse, SkillDefinition, StateSnapshot, Task, TeamConflict, TeamLease, TeamQueueEntry, TeamStatus as TeamStatusDTO, TransferPreview } from "./api/types";
+import type { Actor, AgentTopology, ApprovalRequest, MissionEnvelope, ProjectResponse, SCMStatus, SkillDefinition, StateSnapshot, Task, TeamConflict, TeamLease, TeamQueueEntry, TeamStatus as TeamStatusDTO, TransferPreview } from "./api/types";
 import { ChangeQueue } from "./components/change-queue";
 import { ContextPanel } from "./components/context-panel";
 import { EvidenceDesk } from "./components/evidence-desk";
@@ -20,11 +20,13 @@ import { WorkGraph } from "./components/work-graph";
 import { SkillActivity } from "./components/skill-activity";
 import { ApprovalInbox } from "./components/approval-inbox";
 import { MigrationCenter } from "./components/migration-center";
+import { SCMProvenance } from "./components/scm-provenance";
 import "./styles.css";
 
 export interface AppProps {
   client?: ApiClient;
   initialState?: ProjectResponse;
+  readOnly?: boolean;
 }
 
 export interface TeamWorkbenchState {
@@ -57,7 +59,7 @@ const emptyState: ProjectResponse = {
   requirements: {}, tasks: {}, runs: {}, evidence: {}, contexts: {}, steps: {}, checkpoints: {}, executor_events: {}, changes: {}, attributions: {},
 };
 
-export function App({ client: providedClient, initialState }: AppProps) {
+export function App({ client: providedClient, initialState, readOnly = false }: AppProps) {
   const [state, setState] = useState<ProjectResponse>(initialState ?? emptyState);
   const [eventCount, setEventCount] = useState<number>();
   const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -68,6 +70,7 @@ export function App({ client: providedClient, initialState }: AppProps) {
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [transferPreview, setTransferPreview] = useState<TransferPreview>();
+  const [scmStatus, setSCMStatus] = useState<SCMStatus>();
   const [teamState, setTeamState] = useState<TeamWorkbenchState>({ status: initialState?.team, leases: initialState?.team?.active_leases ?? [], queue: [], conflicts: initialState?.team?.open_conflicts ?? [] });
   const defaultClient = useMemo(() => createApiClient({ onConnectionChange: setConnection }), []);
   const client = providedClient ?? defaultClient;
@@ -97,6 +100,7 @@ export function App({ client: providedClient, initialState }: AppProps) {
       if (client.getAgentTopology) void client.getAgentTopology().then(setTopology).catch(() => undefined);
       if (client.getSkills) void client.getSkills().then(setSkills).catch(() => undefined);
       if (client.getApprovals) void client.getApprovals().then(setApprovals).catch(() => undefined);
+      if (client.getSCMStatus) void client.getSCMStatus().then(setSCMStatus).catch(() => setSCMStatus(undefined));
       setError("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "无法读取项目状态"); }
   }, [client, refreshTeam]);
@@ -141,6 +145,10 @@ export function App({ client: providedClient, initialState }: AppProps) {
   const decideApproval = async (id: string) => { const approval = approvals.find((item) => item.id === id); if (!approval || !client.decideApproval) return; try { const decided = await client.decideApproval(id, { payload_sha256: approval.payload_sha256, decision: "approved", reason: "Workbench review", actor: owner }); setApprovals((current) => current.map((item) => item.id === id ? decided : item)); } catch (cause) { setError(cause instanceof Error ? cause.message : "Approval decision failed"); } };
   const previewTransfer = async (archive: Uint8Array) => { if (!client.previewTransfer) return; try { setTransferPreview(await client.previewTransfer(archive)); } catch (cause) { setError(cause instanceof Error ? cause.message : "Transfer preview failed"); } };
   const applyTransfer = async () => { if (!transferPreview || !client.applyTransfer) return; try { await client.applyTransfer(transferPreview.preview_hash, owner, true); } catch (cause) { setError(cause instanceof Error ? cause.message : "Transfer apply failed"); } };
+  const registerSCM = async () => { if (!client.registerSCM) return; try { await client.registerSCM(owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "SCM repository registration failed"); } };
+  const confirmSCMBinding = async (id: string) => { if (!client.confirmSCMBinding) return; try { await client.confirmSCMBinding(id, owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "SCM binding confirmation failed"); } };
+  const rejectSCMBinding = async (id: string, reason: string) => { if (!client.rejectSCMBinding) return; try { await client.rejectSCMBinding(id, reason, owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "SCM binding rejection failed"); } };
+  const verifySCMHistory = async (repositoryId: string, refs: string[]) => { if (!client.verifySCMHistory) return; try { await client.verifySCMHistory(repositoryId, refs, owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "SCM history verification failed"); } };
 
   return (
     <main className="workbench-shell">
@@ -163,6 +171,7 @@ export function App({ client: providedClient, initialState }: AppProps) {
           <SkillActivity skills={skills} />
           <ApprovalInbox approvals={approvals} onDecide={(id) => { void decideApproval(id); }} />
           <MigrationCenter preview={transferPreview} onPreview={(archive) => { void previewTransfer(archive); }} onApply={() => { void applyTransfer(); }} />
+          <SCMProvenance status={scmStatus} readOnly={readOnly} onRegister={registerSCM} onConfirm={confirmSCMBinding} onReject={rejectSCMBinding} onVerifyHistory={verifySCMHistory} />
         </div>
         <aside className="action-column"><ChangeQueue client={client} changes={changes} tasks={tasks} onChanged={onChanged} />{teamStatus ? <SyncQueue queue={teamState.queue} onSync={async () => { const report = await client.syncTeam(); await refreshTeam(); return report; }} /> : null}</aside>
       </div>

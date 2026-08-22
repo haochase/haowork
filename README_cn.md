@@ -25,8 +25,10 @@
 </p>
 
 > **项目状态：早期预览。** 仓库已经实现治理事实、Mission、风险审批、执行追踪、团队同步、
-> 签名迁移和 AgentTeams `v1.2.2` 适配合同。真实双区部署仍依赖完整官方镜像、运行凭据、
-> 模型服务和 Core Bridge；依赖缺失时返回明确的 `BLOCKED_*`，不会用模拟结果冒充成功。
+> 签名迁移、受治理的本地 Git Commit 追溯和 AgentTeams `v1.2.2` 适配合同。2026-08-16
+> 已验证官方镜像清单和 Kind 本机双命名空间闭环，覆盖 Core Bridge、Matrix、S3、Higress MCP、
+> 网络隔离与重启恢复。Windows/Ubuntu 物理断网迁移和 A/B/C/D 基准尚未验证；依赖缺失时仍返回
+> 明确的 `BLOCKED_*`，不会用模拟结果冒充成功。
 
 ## 🎬 在线只读演示
 
@@ -152,7 +154,8 @@ flowchart TB
     end
 
     subgraph SCM["Git / SCM 代码变化面"]
-        FILES["Workspace Changes"] --> COMMITS["Commit · Push · PR"]
+        FILES["Workspace Changes"] --> COMMITS["已观察的本地 Commit"]
+        COMMITS --> BINDING["目标 · 任务 · Mission · 证据绑定"]
     end
 
     UI --> GOAL
@@ -164,7 +167,29 @@ flowchart TB
     FILES --> PROOF
 ```
 
-原生绑定 Git Commit、Push 与 Pull Request 是下一阶段能力，当前不会把它描述为已完成。
+第一阶段 SCM 原生能力已经可以把显式选择的本地 Git Commit 绑定到目标、任务、Mission 和已投影证据。
+Push、Pull Request、webhook 与托管平台集成仍属于后续能力，当前不会把它们描述为已完成。
+
+## 🔗 受治理的 Git Commit 追溯
+
+Haowork 不替用户创建或推送 Commit。开发者或交付工具仍按正常 Git 流程提交，再显式要求 Haowork
+观察该不可变对象并提出治理绑定：
+
+```text
+本地 Git 仓库 -> 完整 Commit OID -> 只读对象检查
+  -> 提议目标 / 任务 / Mission / 证据关系
+  -> 按风险人工审批 -> 确认绑定
+  -> 可达性复核 -> 历史分歧时标记 superseded / invalidated
+```
+
+- 事件账本只保存对象 ID、作者/提交者显示名、邮箱摘要、提交消息和变化路径。
+- 不保存原始邮箱、remote URL、源码、patch、凭据或私有仓库绝对路径。
+- L2/L3 确认必须存在载荷哈希完全匹配的审批；Build 不能自批高风险关系。
+- 绑定确认不会自动完成 Task，现有 Evidence 与完成门禁仍是权威边界。
+- force-move 等导致 Commit 不再可达时，原事实仍保留，绑定会显式失效。
+
+可运行 `haowork scm --help`，或使用 Workbench 的 **Git / SCM** 面板。精确策略与边界见
+[`docs/scm-provenance.md`](docs/scm-provenance.md)。
 
 ## 🔄 一条需求如何流转
 

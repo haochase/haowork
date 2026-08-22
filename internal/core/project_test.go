@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -64,6 +65,32 @@ func TestOpenBuildsServiceFromCapsule(t *testing.T) {
 	}
 	if state.Goal.Version != manifest.CurrentGoalVersion {
 		t.Fatalf("Project.Service.Status().Goal.Version = %d, want %d", state.Goal.Version, manifest.CurrentGoalVersion)
+	}
+}
+
+func TestOpenConfiguresSCMOnlyForGitProjectRoot(t *testing.T) {
+	ctx := context.Background()
+	root, _ := initializeCapsule(t, ctx)
+	project, err := Open(ctx, root, Dependencies{IDs: &testkit.IDs{Next: 100}, Clock: testkit.Clock{Value: fixedCoreTime()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.SCMAvailable {
+		t.Fatal("non-Git project reported SCM available")
+	}
+	command := exec.Command("git", "-C", root, "init")
+	if output, commandErr := command.CombinedOutput(); commandErr != nil {
+		t.Fatalf("git init: %v\n%s", commandErr, output)
+	}
+	project, err = Open(ctx, root, Dependencies{IDs: &testkit.IDs{Next: 100}, Clock: testkit.Clock{Value: fixedCoreTime()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !project.SCMAvailable {
+		t.Fatal("Git project did not report SCM available")
+	}
+	if _, err := project.Service.RegisterSCM(ctx, model.Actor{ID: "USR-OWNER", Kind: model.ActorHuman, Role: model.RoleOwner}); err != nil {
+		t.Fatalf("register configured SCM: %v", err)
 	}
 }
 

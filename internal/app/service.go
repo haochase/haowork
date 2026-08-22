@@ -58,6 +58,8 @@ type Service struct {
 	evidenceVerifierConfigured bool
 	cursorOrder                CursorOrder
 	executorAdapter            executor.ExecutorAdapter
+	scmInspector               SCMInspector
+	scmRoot                    string
 	mutationMu                 sync.Mutex
 }
 

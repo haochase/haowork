@@ -16,6 +16,7 @@ import (
 	"github.com/haochase/haowork/internal/eventstore"
 	"github.com/haochase/haowork/internal/executor"
 	"github.com/haochase/haowork/internal/model"
+	"github.com/haochase/haowork/internal/scm"
 	"github.com/haochase/haowork/internal/skillapi"
 	"github.com/haochase/haowork/internal/team"
 	"github.com/haochase/haowork/internal/teamapi"
@@ -59,6 +60,8 @@ type Project struct {
 	Events   app.EventRepository
 	Team     *Team
 	Transfer *transfer.Service
+	// SCMAvailable indicates that the project root is a local Git worktree.
+	SCMAvailable bool
 	// SkillAdapters are project-owned runtime wiring; the MCP surface never opens event files.
 	SkillAdapters skillapi.AdapterMap
 }
@@ -149,6 +152,10 @@ func Open(ctx context.Context, start string, deps Dependencies) (Project, error)
 		changes.Scanner{},
 		root,
 	)
+	scmAvailable, err := configureSCM(root, service)
+	if err != nil {
+		return Project{}, err
+	}
 	adapters := skillapi.CoreAdapters(service)
 	if deps.CrossZone != nil {
 		adapters = skillapi.CoreAdaptersWithCrossZone(service, *deps.CrossZone)
@@ -177,8 +184,23 @@ func Open(ctx context.Context, start string, deps Dependencies) (Project, error)
 		Events:        events,
 		Team:          joined,
 		Transfer:      transferService,
+		SCMAvailable:  scmAvailable,
 		SkillAdapters: adapters,
 	}, nil
+}
+
+func configureSCM(root string, service *app.Service) (bool, error) {
+	_, err := os.Stat(filepath.Join(root, ".git"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect local Git metadata: %w", err)
+	}
+	if err := service.ConfigureSCM(scm.NewInspector(), root); err != nil {
+		return false, fmt.Errorf("configure local Git inspection: %w", err)
+	}
+	return true, nil
 }
 
 type transferEventRepository interface {

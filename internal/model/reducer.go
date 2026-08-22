@@ -102,6 +102,20 @@ func Reduce(events []Event) (ProjectState, error) {
 			err = applyChangesScanned(&state, event)
 		case "change.attributed":
 			err = applyChangeAttributed(&state, event)
+		case "scm.repository.registered":
+			err = applySCMRepositoryRegistered(&state, event)
+		case "scm.commit.observed":
+			err = applySCMCommitObserved(&state, event)
+		case "scm.binding.proposed":
+			err = applySCMBindingProposed(&state, event)
+		case "scm.binding.confirmed":
+			err = applySCMBindingConfirmed(&state, event)
+		case "scm.binding.rejected":
+			err = applySCMBindingRejected(&state, event)
+		case "scm.commit.superseded":
+			err = applySCMCommitSuperseded(&state, event)
+		case "scm.binding.invalidated":
+			err = applySCMBindingInvalidated(&state, event)
 		default:
 			err = fmt.Errorf("unknown event type %q", event.Type)
 		}
@@ -155,6 +169,10 @@ func applyProjectInitialized(state *ProjectState, event Event) error {
 	state.RuntimeBindings = make(map[string][]RuntimeBinding)
 	state.Missions = make(map[string]MissionEnvelope)
 	state.Approvals = make(map[string]ApprovalRequest)
+	state.SCMRepositories = make(map[string]SCMRepository)
+	state.CommitObservations = make(map[string]CommitObservation)
+	state.SCMCommitStatus = make(map[string]string)
+	state.SCMBindings = make(map[string]SCMBinding)
 	return nil
 }
 

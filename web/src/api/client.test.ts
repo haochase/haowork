@@ -159,4 +159,50 @@ describe("local API client", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(fetcher.mock.calls[2]?.[0]).toBe("/api/v1/approvals/APR-1/decide");
   });
+
+  it("routes explicit SCM reads and mutations through the Local API", async () => {
+    const responses = [
+      { repositories: [], commits: [], bindings: [] },
+      { id: "SCM-001" },
+      { repository_id: "SCM-001", commit_oid: "a".repeat(40) },
+      { id: "SCB-001", status: "proposed" },
+      { id: "SCB-001", status: "confirmed" },
+      { checked: 1, reachable: 1, superseded: 0, invalidated: 0 },
+    ];
+    const fetcher = vi.fn<typeof fetch>();
+    for (const response of responses) {
+      fetcher.mockResolvedValueOnce(new Response(JSON.stringify(response), { status: 200 }));
+    }
+    const client = createApiClient({ fetcher });
+    const actor = { id: "owner", kind: "human", role: "owner" } as const;
+
+    await client.getSCMStatus?.();
+    await client.registerSCM?.(actor);
+    await client.observeSCMCommit?.("SCM-001", "a".repeat(40), actor);
+    await client.proposeSCMBinding?.({
+      repository_id: "SCM-001",
+      commit_oid: "a".repeat(40),
+      task_ids: ["TSK-001"],
+      mission_id: "MSN-001",
+      evidence_ids: ["EVD-001"],
+      trace_ids: ["TRC-001"],
+      actor,
+    });
+    await client.confirmSCMBinding?.("SCB-001", actor);
+    await client.verifySCMHistory?.("SCM-001", ["refs/heads/main"], actor);
+
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+      "/api/v1/scm/status",
+      "/api/v1/scm/register",
+      "/api/v1/scm/commits/observe",
+      "/api/v1/scm/bindings",
+      "/api/v1/scm/bindings/SCB-001/confirm",
+      "/api/v1/scm/history/verify",
+    ]);
+    expect(JSON.parse(String(fetcher.mock.calls[5]?.[1]?.body))).toEqual({
+      repository_id: "SCM-001",
+      refs: ["refs/heads/main"],
+      actor,
+    });
+  });
 });

@@ -40,6 +40,7 @@ func DefaultCommands() []CommandFactory {
 		NewTraceCommand,
 		NewApprovalsCommand,
 		NewTransferCommand,
+		NewSCMCommand,
 	}
 }
 
