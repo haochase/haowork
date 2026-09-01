@@ -57,6 +57,7 @@ func (s *Server) registerSCMRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(scmPath+"/bindings", s.handleSCMBindings)
 	mux.HandleFunc(scmPath+"/bindings/", s.handleSCMBindingAction)
 	mux.HandleFunc(scmPath+"/history/verify", s.handleSCMHistory)
+	s.registerGitHubSCMRoutes(mux)
 }
 
 func (s *Server) scmUnavailable(w http.ResponseWriter) bool {

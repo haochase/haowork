@@ -167,8 +167,9 @@ flowchart TB
     FILES --> PROOF
 ```
 
-第一阶段 SCM 原生能力已经可以把显式选择的本地 Git Commit 绑定到目标、任务、Mission 和已投影证据。
-Push、Pull Request、webhook 与托管平台集成仍属于后续能力，当前不会把它们描述为已完成。
+SCM 原生能力可以把显式选择的本地 Git Commit 绑定到目标、任务、Mission 和已投影证据。GitHub `github.com`
+的 ref、Pull Request、Review、Check Run 与 Commit Status 也可以通过 GET-only 观察器读取。GitHub 写操作、
+Webhook、GitLab 与其他托管平台集成仍属于后续能力。
 
 ## 🔗 受治理的 Git Commit 追溯
 
@@ -190,6 +191,10 @@ Haowork 不替用户创建或推送 Commit。开发者或交付工具仍按正�
 
 可运行 `haowork scm --help`，或使用 Workbench 的 **Git / SCM** 面板。精确策略与边界见
 [`docs/scm-provenance.md`](docs/scm-provenance.md)。
+
+GitHub 观察使用运行中的 Local Core 执行 `haowork scm github connect`、`sync` 与 `status`。仓库身份只从本地
+`origin` 推导；不保存 Token 或 PR 正文；PR 合并和 Check 成功都不会自动完成 Task。具体配置见
+[`docs/scm-github-observer.md`](docs/scm-github-observer.md)。
 
 ## 🔄 一条需求如何流转
 
@@ -319,7 +324,7 @@ go build -trimpath -o bin/haowork.exe ./cmd/haowork
 
 ## 🗺️ 下一阶段
 
-- 将 Requirement、Mission 与 Evidence 同 Git Commit、Push、Pull Request 原生绑定。
+- 在不增加托管平台写控制的前提下，将只读 SCM 观察扩展到 GitHub `github.com` 之外。
 - 完善需求版本、架构约束、责任矩阵与偏差审查的 Workbench 体验。
 - 增强 GoalVersion 漂移分析和面向重构的影响范围查询。
 - 完成旧项目基线导入、候选关系分析和人工确认流程。
@@ -328,6 +333,7 @@ go build -trimpath -o bin/haowork.exe ./cmd/haowork
 ## 📚 文档
 
 - [产品设计与工程治理模型](docs/product-design.md)
+- [GitHub 远端 SCM 只读观察](docs/scm-github-observer.md)
 - [AgentTeams 集成边界](docs/agentteams.md)
 - [CLI 使用说明](docs/cli.md)
 - [Workbench 使用说明](docs/workbench.md)

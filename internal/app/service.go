@@ -16,6 +16,7 @@ import (
 	"github.com/haochase/haowork/internal/executor"
 	"github.com/haochase/haowork/internal/mission"
 	"github.com/haochase/haowork/internal/model"
+	"github.com/haochase/haowork/internal/scmremote"
 )
 
 var (
@@ -60,6 +61,8 @@ type Service struct {
 	executorAdapter            executor.ExecutorAdapter
 	scmInspector               SCMInspector
 	scmRoot                    string
+	scmRemoteObserver          scmremote.Observer
+	scmRemoteRoot              string
 	mutationMu                 sync.Mutex
 }
 

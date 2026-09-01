@@ -403,3 +403,96 @@ export interface SCMHistoryReport {
   superseded: number;
   invalidated: number;
 }
+
+export interface SCMRemote {
+  id: string;
+  repository_id: string;
+  provider: "github";
+  provider_repository_fingerprint: string;
+  api_host_sha256: string;
+  registered_at: string;
+}
+
+export interface SCMRemoteRuntimeStatus {
+  connected: boolean;
+  authenticated: boolean;
+  last_successful_sync?: string;
+  retry_at?: string;
+  rate_limit_remaining: number;
+}
+
+export interface SCMRemoteRefObservation {
+  remote_id: string;
+  ref: string;
+  commit_oid?: string;
+  previous_oid?: string;
+  change: "created" | "moved" | "deleted";
+  observed_at: string;
+}
+
+export interface SCMPullRequestObservation {
+  remote_id: string;
+  number: number;
+  state: "open" | "closed";
+  draft: boolean;
+  title_sha256: string;
+  author_sha256: string;
+  base_ref: string;
+  base_oid: string;
+  head_ref: string;
+  head_repository_sha256: string;
+  head_oid: string;
+  commit_oids: string[];
+  merge_commit_oid?: string;
+  merged_at?: string;
+  github_updated_at: string;
+  observed_at: string;
+}
+
+export interface GitHubPullProjection {
+  observation: SCMPullRequestObservation;
+  local_commit_count: number;
+  confirmed_bindings: number;
+}
+
+export interface SCMReviewObservation {
+  remote_id: string;
+  pull_number: number;
+  review_id: number;
+  commit_oid: string;
+  reviewer_sha256: string;
+  state: string;
+  submitted_at: string;
+  observed_at: string;
+}
+
+export interface SCMCheckObservation {
+  remote_id: string;
+  external_id: string;
+  source: "check-run" | "commit-status";
+  commit_oid: string;
+  name: string;
+  status: string;
+  conclusion?: string;
+  started_at?: string;
+  completed_at?: string;
+  observed_at: string;
+}
+
+export interface GitHubSCMStatus {
+  remote?: SCMRemote;
+  runtime: SCMRemoteRuntimeStatus;
+  refs: SCMRemoteRefObservation[];
+  pull_requests: GitHubPullProjection[];
+  reviews: SCMReviewObservation[];
+  checks: SCMCheckObservation[];
+}
+
+export interface GitHubSCMSyncReport {
+  refs: number;
+  pull_requests: number;
+  reviews: number;
+  checks: number;
+  appended: number;
+  synced_at: string;
+}

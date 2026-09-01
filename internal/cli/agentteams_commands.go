@@ -266,7 +266,7 @@ func newApprovalsDecideCommand(deps *Dependencies) *cobra.Command {
 
 func NewTransferCommand(deps *Dependencies) *cobra.Command {
 	command := &cobra.Command{Use: "transfer", Short: "Preview and apply signed Project Capsule transfers"}
-	command.AddCommand(newTransferExportCommand(deps), newTransferPreviewCommand(deps), newTransferApplyCommand(deps))
+	command.AddCommand(newTransferExportCommand(deps), newTransferReturnCommand(deps), newTransferPreviewCommand(deps), newTransferApplyCommand(deps))
 	return command
 }
 func newTransferExportCommand(deps *Dependencies) *cobra.Command {
@@ -297,6 +297,37 @@ func newTransferExportCommand(deps *Dependencies) *cobra.Command {
 	_ = command.MarkFlagRequired("output")
 	return command
 }
+
+func newTransferReturnCommand(deps *Dependencies) *cobra.Command {
+	var input, output string
+	command := &cobra.Command{Use: "return", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		request, err := os.ReadFile(input)
+		if err != nil {
+			return operationalError(err)
+		}
+		client := localAPIClient(cmd.Context(), deps.Options.Project)
+		if client == nil {
+			return &CodedError{Code: ExitOffline, Err: errors.New("local Core is required for transfer return")}
+		}
+		archive, conflicts, err := client.BuildTransferReturn(cmd.Context(), request)
+		if err != nil {
+			return mapError(err)
+		}
+		if err := os.WriteFile(output, archive, 0o600); err != nil {
+			return operationalError(err)
+		}
+		return writeOutput(cmd.OutOrStdout(), deps.Options.JSON, "built transfer return", struct {
+			Output    string   `json:"output"`
+			Conflicts []string `json:"conflicts"`
+		}{Output: output, Conflicts: conflicts})
+	}}
+	command.Flags().StringVar(&input, "input", "", "approved return request JSON file")
+	command.Flags().StringVar(&output, "output", "", "return archive output path")
+	_ = command.MarkFlagRequired("input")
+	_ = command.MarkFlagRequired("output")
+	return command
+}
+
 func newTransferPreviewCommand(deps *Dependencies) *cobra.Command {
 	var input string
 	command := &cobra.Command{Use: "preview", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

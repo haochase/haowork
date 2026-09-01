@@ -20,6 +20,7 @@ func NewSCMCommand(deps *Dependencies) *cobra.Command {
 		newSCMConfirmCommand(deps),
 		newSCMRejectCommand(deps),
 		newSCMVerifyHistoryCommand(deps),
+		newSCMGitHubCommand(deps),
 	)
 	return command
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { bootstrapSession, createApiClient, type ApiClient } from "./api/client";
-import type { Actor, AgentTopology, ApprovalRequest, MissionEnvelope, ProjectResponse, SCMStatus, SkillDefinition, StateSnapshot, Task, TeamConflict, TeamLease, TeamQueueEntry, TeamStatus as TeamStatusDTO, TransferPreview } from "./api/types";
+import type { Actor, AgentTopology, ApprovalRequest, GitHubSCMStatus, MissionEnvelope, ProjectResponse, SCMStatus, SkillDefinition, StateSnapshot, Task, TeamConflict, TeamLease, TeamQueueEntry, TeamStatus as TeamStatusDTO, TransferPreview } from "./api/types";
 import { ChangeQueue } from "./components/change-queue";
 import { ContextPanel } from "./components/context-panel";
 import { EvidenceDesk } from "./components/evidence-desk";
@@ -21,6 +21,7 @@ import { SkillActivity } from "./components/skill-activity";
 import { ApprovalInbox } from "./components/approval-inbox";
 import { MigrationCenter } from "./components/migration-center";
 import { SCMProvenance } from "./components/scm-provenance";
+import { SCMRemote as SCMRemotePanel } from "./components/scm-remote";
 import "./styles.css";
 
 export interface AppProps {
@@ -71,6 +72,7 @@ export function App({ client: providedClient, initialState, readOnly = false }: 
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [transferPreview, setTransferPreview] = useState<TransferPreview>();
   const [scmStatus, setSCMStatus] = useState<SCMStatus>();
+  const [githubSCMStatus, setGitHubSCMStatus] = useState<GitHubSCMStatus>();
   const [teamState, setTeamState] = useState<TeamWorkbenchState>({ status: initialState?.team, leases: initialState?.team?.active_leases ?? [], queue: [], conflicts: initialState?.team?.open_conflicts ?? [] });
   const defaultClient = useMemo(() => createApiClient({ onConnectionChange: setConnection }), []);
   const client = providedClient ?? defaultClient;
@@ -101,6 +103,7 @@ export function App({ client: providedClient, initialState, readOnly = false }: 
       if (client.getSkills) void client.getSkills().then(setSkills).catch(() => undefined);
       if (client.getApprovals) void client.getApprovals().then(setApprovals).catch(() => undefined);
       if (client.getSCMStatus) void client.getSCMStatus().then(setSCMStatus).catch(() => setSCMStatus(undefined));
+      if (client.getGitHubSCMStatus) void client.getGitHubSCMStatus().then(setGitHubSCMStatus).catch(() => setGitHubSCMStatus(undefined));
       setError("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "无法读取项目状态"); }
   }, [client, refreshTeam]);
@@ -149,6 +152,8 @@ export function App({ client: providedClient, initialState, readOnly = false }: 
   const confirmSCMBinding = async (id: string) => { if (!client.confirmSCMBinding) return; try { await client.confirmSCMBinding(id, owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "SCM binding confirmation failed"); } };
   const rejectSCMBinding = async (id: string, reason: string) => { if (!client.rejectSCMBinding) return; try { await client.rejectSCMBinding(id, reason, owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "SCM binding rejection failed"); } };
   const verifySCMHistory = async (repositoryId: string, refs: string[]) => { if (!client.verifySCMHistory) return; try { await client.verifySCMHistory(repositoryId, refs, owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "SCM history verification failed"); } };
+  const connectGitHubSCM = async () => { if (!client.connectGitHubSCM) return; try { await client.connectGitHubSCM(owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "GitHub connection failed"); } };
+  const syncGitHubSCM = async () => { if (!client.syncGitHubSCM) return; try { await client.syncGitHubSCM(owner); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "GitHub sync failed"); } };
 
   return (
     <main className="workbench-shell">
@@ -172,6 +177,7 @@ export function App({ client: providedClient, initialState, readOnly = false }: 
           <ApprovalInbox approvals={approvals} onDecide={(id) => { void decideApproval(id); }} />
           <MigrationCenter preview={transferPreview} onPreview={(archive) => { void previewTransfer(archive); }} onApply={() => { void applyTransfer(); }} />
           <SCMProvenance status={scmStatus} readOnly={readOnly} onRegister={registerSCM} onConfirm={confirmSCMBinding} onReject={rejectSCMBinding} onVerifyHistory={verifySCMHistory} />
+          <SCMRemotePanel status={githubSCMStatus} readOnly={readOnly} onConnect={connectGitHubSCM} onSync={syncGitHubSCM} />
         </div>
         <aside className="action-column"><ChangeQueue client={client} changes={changes} tasks={tasks} onChanged={onChanged} />{teamStatus ? <SyncQueue queue={teamState.queue} onSync={async () => { const report = await client.syncTeam(); await refreshTeam(); return report; }} /> : null}</aside>
       </div>

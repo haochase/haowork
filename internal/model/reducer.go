@@ -116,6 +116,16 @@ func Reduce(events []Event) (ProjectState, error) {
 			err = applySCMCommitSuperseded(&state, event)
 		case "scm.binding.invalidated":
 			err = applySCMBindingInvalidated(&state, event)
+		case "scm.remote.registered":
+			err = applySCMRemoteRegistered(&state, event)
+		case "scm.remote.ref.observed":
+			err = applySCMRemoteRefObserved(&state, event)
+		case "scm.remote.pull_request.observed":
+			err = applySCMRemotePullRequestObserved(&state, event)
+		case "scm.remote.review.observed":
+			err = applySCMRemoteReviewObserved(&state, event)
+		case "scm.remote.check.observed":
+			err = applySCMRemoteCheckObserved(&state, event)
 		default:
 			err = fmt.Errorf("unknown event type %q", event.Type)
 		}
@@ -173,6 +183,11 @@ func applyProjectInitialized(state *ProjectState, event Event) error {
 	state.CommitObservations = make(map[string]CommitObservation)
 	state.SCMCommitStatus = make(map[string]string)
 	state.SCMBindings = make(map[string]SCMBinding)
+	state.SCMRemotes = make(map[string]SCMRemote)
+	state.SCMRemoteRefs = make(map[string]SCMRemoteRefObservation)
+	state.SCMPullRequests = make(map[string]SCMPullRequestObservation)
+	state.SCMReviews = make(map[string]SCMReviewObservation)
+	state.SCMChecks = make(map[string]SCMCheckObservation)
 	return nil
 }
 

@@ -34,6 +34,9 @@ describe("Team Workbench integration", () => {
     const client = { subscribe: vi.fn(() => () => undefined) } as unknown as ApiClient;
     const html = renderToStaticMarkup(<App client={client} initialState={emptyState} readOnly />);
     expect(html).toContain("代码关联");
+	expect(html).toContain("GitHub 远端观察");
     expect(html).not.toContain("注册仓库");
+	expect(html).not.toContain("连接 GitHub");
+	expect(html).not.toContain("同步 GitHub");
   });
 });

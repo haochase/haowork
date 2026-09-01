@@ -258,29 +258,34 @@ type ChangeAttribution struct {
 }
 
 type ProjectState struct {
-	ProjectID          string                       `json:"project_id"`
-	Goal               GoalVersion                  `json:"goal"`
-	GoalChanges        map[string]GoalChange        `json:"goal_changes"`
-	Leases             map[string]Lease             `json:"leases"`
-	Conflicts          map[string]Conflict          `json:"conflicts"`
-	Requirements       map[string]Requirement       `json:"requirements"`
-	Tasks              map[string]Task              `json:"tasks"`
-	Runs               map[string]Run               `json:"runs"`
-	Evidence           map[string][]Evidence        `json:"evidence"`
-	Contexts           map[string]ContextSlice      `json:"contexts"`
-	Steps              map[string]Step              `json:"steps"`
-	Checkpoints        map[string]Checkpoint        `json:"checkpoints"`
-	ExecutorEvents     map[string]ExecutorEvent     `json:"executor_events"`
-	Changes            map[string]FileChange        `json:"changes"`
-	Attributions       map[string]ChangeAttribution `json:"attributions"`
-	Agents             map[string]LogicalAgent      `json:"agents"`
-	RuntimeBindings    map[string][]RuntimeBinding  `json:"runtime_bindings"`
-	Missions           map[string]MissionEnvelope   `json:"missions"`
-	Approvals          map[string]ApprovalRequest   `json:"approvals"`
-	SCMRepositories    map[string]SCMRepository     `json:"scm_repositories"`
-	CommitObservations map[string]CommitObservation `json:"commit_observations"`
-	SCMCommitStatus    map[string]string            `json:"scm_commit_status"`
-	SCMBindings        map[string]SCMBinding        `json:"scm_bindings"`
+	ProjectID          string                               `json:"project_id"`
+	Goal               GoalVersion                          `json:"goal"`
+	GoalChanges        map[string]GoalChange                `json:"goal_changes"`
+	Leases             map[string]Lease                     `json:"leases"`
+	Conflicts          map[string]Conflict                  `json:"conflicts"`
+	Requirements       map[string]Requirement               `json:"requirements"`
+	Tasks              map[string]Task                      `json:"tasks"`
+	Runs               map[string]Run                       `json:"runs"`
+	Evidence           map[string][]Evidence                `json:"evidence"`
+	Contexts           map[string]ContextSlice              `json:"contexts"`
+	Steps              map[string]Step                      `json:"steps"`
+	Checkpoints        map[string]Checkpoint                `json:"checkpoints"`
+	ExecutorEvents     map[string]ExecutorEvent             `json:"executor_events"`
+	Changes            map[string]FileChange                `json:"changes"`
+	Attributions       map[string]ChangeAttribution         `json:"attributions"`
+	Agents             map[string]LogicalAgent              `json:"agents"`
+	RuntimeBindings    map[string][]RuntimeBinding          `json:"runtime_bindings"`
+	Missions           map[string]MissionEnvelope           `json:"missions"`
+	Approvals          map[string]ApprovalRequest           `json:"approvals"`
+	SCMRepositories    map[string]SCMRepository             `json:"scm_repositories"`
+	CommitObservations map[string]CommitObservation         `json:"commit_observations"`
+	SCMCommitStatus    map[string]string                    `json:"scm_commit_status"`
+	SCMBindings        map[string]SCMBinding                `json:"scm_bindings"`
+	SCMRemotes         map[string]SCMRemote                 `json:"scm_remotes"`
+	SCMRemoteRefs      map[string]SCMRemoteRefObservation   `json:"scm_remote_refs"`
+	SCMPullRequests    map[string]SCMPullRequestObservation `json:"scm_pull_requests"`
+	SCMReviews         map[string]SCMReviewObservation      `json:"scm_reviews"`
+	SCMChecks          map[string]SCMCheckObservation       `json:"scm_checks"`
 }
 
 type ProjectInitialized struct {

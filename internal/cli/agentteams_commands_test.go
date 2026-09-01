@@ -3,6 +3,8 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,5 +29,20 @@ func TestMissionIssueRejectsMissingWorkerAssignmentsBeforeAPI(t *testing.T) {
 	code := cli.Execute(context.Background(), []string{"--json", "mission", "issue", "--task", "TSK-1", "--context", "CTX-1", "--actor", "owner"}, &stdout, &stderr)
 	if code != cli.ExitUsage {
 		t.Fatalf("code = %d, want usage; stdout=%q", code, stdout.String())
+	}
+}
+
+func TestTransferReturnCommandIsAvailableBeforeOpeningLocalCore(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "return-request.json")
+	if err := os.WriteFile(input, []byte(`{"approval":{"id":"APR-001"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := cli.Execute(context.Background(), []string{"--json", "transfer", "return", "--input", input, "--output", filepath.Join(t.TempDir(), "return.zip")}, &stdout, &stderr)
+	if code != cli.ExitOffline {
+		t.Fatalf("return command exit=%d, want offline Core; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(strings.ToLower(stderr.String()), "unknown command") {
+		t.Fatalf("return command is not registered: %q", stderr.String())
 	}
 }

@@ -119,6 +119,32 @@ func TestClientStatusUsesControlHeader(t *testing.T) {
 	}
 }
 
+func TestClientBuildsTransferReturnThroughControlChannel(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/transfers/return" || r.Header.Get(controlHeader) != testControlKey {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["approval"] == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"archive": "cmV0dXJuLWFyY2hpdmU=", "conflicts": []string{"scope_overlap"}})
+	}))
+	defer api.Close()
+
+	client := NewClient(localcore.Metadata{Endpoint: api.URL, ControlKey: testControlKey})
+	archive, conflicts, err := client.BuildTransferReturn(context.Background(), []byte(`{"approval":{"id":"APR-001"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(archive) != "return-archive" || len(conflicts) != 1 || conflicts[0] != "scope_overlap" {
+		t.Fatalf("return archive=%q conflicts=%#v", archive, conflicts)
+	}
+}
+
 func TestClientScansAndAttributesChanges(t *testing.T) {
 	owner := model.Actor{ID: "USR-OWNER", Kind: model.ActorHuman, Role: model.RoleOwner}
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
