@@ -33,12 +33,10 @@ func validateOwnerOnly(path string, _ os.FileInfo) error {
 	if err != nil || owner == nil {
 		return errors.New("owner-only file owner is unavailable")
 	}
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	token := windows.GetCurrentProcessToken()
+	user, err := token.GetTokenUser()
 	if err != nil {
 		return err
-	}
-	if !owner.Equals(user.User.Sid) {
-		return errors.New("owner-only file is not owned by the current user")
 	}
 	system, err := windows.StringToSid("S-1-5-18")
 	if err != nil {
@@ -47,6 +45,15 @@ func validateOwnerOnly(path string, _ os.FileInfo) error {
 	administrators, err := windows.StringToSid("S-1-5-32-544")
 	if err != nil {
 		return err
+	}
+	if !owner.Equals(user.User.Sid) {
+		isAdministrator, memberErr := token.IsMember(administrators)
+		if memberErr != nil {
+			return memberErr
+		}
+		if !owner.Equals(administrators) || !isAdministrator {
+			return errors.New("owner-only file is not owned by the current user or their administrators group")
+		}
 	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil || dacl == nil {
