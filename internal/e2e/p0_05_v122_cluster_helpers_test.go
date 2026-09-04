@@ -45,6 +45,9 @@ const (
 	p005V122ClusterName       = "haowork-p005-v122"
 )
 
+const p005V122TopologyReadyTimeout = 8 * time.Minute
+const p005V122FixtureTimeout = 15 * time.Minute
+
 var (
 	p005V122ManagerGVR = schema.GroupVersionResource{Group: agentteamsbridge.OfficialAPIGroup, Version: agentteamsbridge.OfficialAPIVersion, Resource: "managers"}
 	p005V122WorkerGVR  = schema.GroupVersionResource{Group: agentteamsbridge.OfficialAPIGroup, Version: agentteamsbridge.OfficialAPIVersion, Resource: "workers"}
@@ -99,7 +102,7 @@ type p005V122ProbeTarget struct {
 
 func newP005V122ClusterFixture(t *testing.T) *p005V122ClusterFixture {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), p005V122FixtureTimeout)
 	t.Cleanup(cancel)
 	repoRoot := p005V122FindRepoRoot(t)
 	contract, err := agentteamsbridge.LoadOfficialContract(filepath.Join(repoRoot, "deploy", "agentteams", "v1.2.2", "upstream.lock.json"))
@@ -193,7 +196,7 @@ func (fixture *p005V122ClusterFixture) requireFiveRoleTopology() agentteamsbridg
 	var topology agentteamsbridge.RuntimeTopology
 	var err error
 	lastError := ""
-	deadline := time.Now().Add(4 * time.Minute)
+	deadline := time.Now().Add(p005V122TopologyReadyTimeout)
 	for time.Now().Before(deadline) {
 		topology, err = orchestrator.EnsureMissionTeam(fixture.ctx, mission)
 		if err == nil {

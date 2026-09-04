@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -120,6 +121,18 @@ func TestP005V122MissionConfigRequiresPinnedManagerImage(t *testing.T) {
 	image := p005V122RequiredManagerImage("registry.example.test/agentteams-manager:v1.2.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if !strings.Contains(image, "@sha256:") {
 		t.Fatalf("manager image = %q", image)
+	}
+}
+
+func TestP005V122TopologyWaitCoversObservedColdStart(t *testing.T) {
+	if p005V122TopologyReadyTimeout < 8*time.Minute {
+		t.Fatalf("topology timeout = %s", p005V122TopologyReadyTimeout)
+	}
+}
+
+func TestP005V122FixtureBudgetCoversTopologyAndPostChecks(t *testing.T) {
+	if p005V122FixtureTimeout-p005V122TopologyReadyTimeout < 7*time.Minute {
+		t.Fatalf("fixture timeout %s does not leave enough post-topology budget", p005V122FixtureTimeout)
 	}
 }
 

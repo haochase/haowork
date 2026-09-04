@@ -204,6 +204,9 @@ function Assert-DeploymentScripts {
     Assert-True ($down -match 'BLOCKED_HELM_UNINSTALL') 'down must fail if a release cannot be uninstalled'
     Assert-True ($down -match 'BLOCKED_NAMESPACE_DELETE') 'down must fail if a namespace cannot be deleted'
     Assert-True ($down -match 'BLOCKED_KIND_DELETE') 'down must fail if a requested Kind cluster cannot be deleted'
+    $directClusterDelete = $down.IndexOf('if ($DeleteCluster)', [StringComparison]::Ordinal)
+    $helmUninstall = $down.IndexOf('& $helm uninstall', [StringComparison]::Ordinal)
+    Assert-True ($directClusterDelete -ge 0 -and $helmUninstall -gt $directClusterDelete) 'owned DeleteCluster cleanup must bypass namespace-level Helm finalizers'
     Assert-True ($down -match 'Stop-P005V122BrowserPortForward') 'down must stop only controlled browser port-forwards'
     Assert-True ($down -match 'process_start_time_utc') 'down must protect against port-forward PID reuse'
     Assert-True ($up -match 'Assert-P005V122ClusterName') 'up must validate the cluster name before deriving cache paths'

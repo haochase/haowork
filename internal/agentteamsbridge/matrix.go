@@ -188,8 +188,8 @@ func (client *MatrixV3Client) Send(ctx context.Context, roomID string, outbound 
 		EventID string `json:"event_id"`
 	}
 	body := map[string]any{
-		"msgtype":                      "m.notice",
-		"body":                         "Haowork governed mission reference",
+		"msgtype":                      "m.text",
+		"body":                         "Haowork governed mission assigned. Read the attached mission reference and reply with a concise completion summary.",
 		"org.haowork.mission_id":       strings.TrimSpace(outbound.MissionID),
 		"org.haowork.run_id":           strings.TrimSpace(outbound.RunID),
 		"org.haowork.work_item_id":     strings.TrimSpace(outbound.WorkItemID),
