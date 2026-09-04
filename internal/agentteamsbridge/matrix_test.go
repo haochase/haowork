@@ -70,7 +70,7 @@ func TestMatrixV3LoginAndSendUseOfficialEndpoints(t *testing.T) {
 	defer server.Close()
 
 	client, err := agentteamsbridge.NewMatrixV3Client(agentteamsbridge.MatrixV3Config{
-		BaseURL: server.URL, Username: "manager", Password: "matrix-password", Client: server.Client(),
+		BaseURL: server.URL, Username: "manager", Password: "matrix-password", ExpectedUserID: "@manager:matrix.test", Client: server.Client(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +90,22 @@ func TestMatrixV3LoginAndSendUseOfficialEndpoints(t *testing.T) {
 	}
 	if len(requests) != 3 {
 		t.Fatalf("official Matrix requests = %#v", requests)
+	}
+}
+
+func TestMatrixV3LoginRejectsUnexpectedUserID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		_, _ = response.Write([]byte(`{"access_token":"wrong-token","user_id":"@other:matrix.test"}`))
+	}))
+	defer server.Close()
+	client, err := agentteamsbridge.NewMatrixV3Client(agentteamsbridge.MatrixV3Config{
+		BaseURL: server.URL, Username: "manager", Password: "matrix-password", ExpectedUserID: "@manager:matrix.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Login(context.Background()); err == nil {
+		t.Fatal("Matrix login accepted an unexpected user identity")
 	}
 }
 

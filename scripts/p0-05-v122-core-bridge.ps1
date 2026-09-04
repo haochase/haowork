@@ -179,23 +179,18 @@ $bridgeToken = New-P005V122RandomHex
 $model = [string](Get-Item -Path 'Env:HAOWORK_P005_PUBLIC_LLM_MODEL' -ErrorAction SilentlyContinue).Value
 if ([string]::IsNullOrWhiteSpace($model) -or $model.Contains("`n") -or $model.Contains("`r")) { throw 'BLOCKED_RUNTIME_MODEL' }
 $managerPod = & $kubectl get pod haowork-public-agentteams-manager -n haowork-public -o json | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MANAGER_MATRIX_TOKEN' }
+if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MANAGER_RUNTIME' }
 $managerImages = @($managerPod.spec.containers | Where-Object { [string]$_.name -ceq 'worker' -and [string]$_.image -ceq $lockedManagerImage } | ForEach-Object { [string]$_.image })
 if ($managerImages.Count -ne 1) { throw 'BLOCKED_MANAGER_IMAGE' }
 $managerImage = $managerImages[0]
-$managerMatrixTokens = @($managerPod.spec.containers[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_MANAGER_MATRIX_TOKEN' } | ForEach-Object { [string]$_.value })
 $managerBuckets = @($managerPod.spec.containers[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_FS_BUCKET' } | ForEach-Object { [string]$_.value })
-if ($managerMatrixTokens.Count -ne 1 -or [string]::IsNullOrWhiteSpace($managerMatrixTokens[0]) -or $managerMatrixTokens[0].Contains("`n") -or $managerMatrixTokens[0].Contains("`r")) {
-    throw 'BLOCKED_MANAGER_MATRIX_TOKEN'
-}
 if ($managerBuckets.Count -ne 1 -or $managerBuckets[0] -notmatch '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$') { throw 'BLOCKED_MANAGER_ARTIFACT_BUCKET' }
-$managerMatrixToken = $managerMatrixTokens[0]
 $managerBucket = $managerBuckets[0]
 Protect-P005V122SecretDirectory -Path $runtimeRoot
 $runtimeEnvironmentPath = Join-Path $runtimeRoot 'core-bridge.env'
 $runtimeEnvironmentHandle = $null
 try {
-$runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPath -Lines @("token=$bridgeToken", "model=$model", "manager-image=$managerImage", "matrix-token=$managerMatrixToken", "bucket=$managerBucket")
+$runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPath -Lines @("token=$bridgeToken", "model=$model", "manager-image=$managerImage", "bucket=$managerBucket")
     $runtimeSecret = & $kubectl create secret generic haowork-core-bridge-runtime -n haowork-public --from-env-file=$runtimeEnvironmentPath --dry-run=client -o yaml
     if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET' }
     $runtimeSecret | & $kubectl apply -f - | Out-Null

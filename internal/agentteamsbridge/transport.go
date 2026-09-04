@@ -99,6 +99,14 @@ func (transport *Transport) Start(ctx context.Context, request executor.AgentTea
 	if err := validateTopology(topology, request, mission); err != nil {
 		return nil, err
 	}
+	if binder, ok := transport.config.Matrix.(HumanMatrixBinder); ok {
+		if topology.HumanName == "" || topology.HumanUID == "" || topology.HumanPrincipalID == "" {
+			return nil, errors.New("AgentTeams Human runtime name is missing")
+		}
+		if err := binder.BindHuman(ctx, HumanMatrixIdentity{Name: topology.HumanName, UID: topology.HumanUID, PrincipalID: topology.HumanPrincipalID}); err != nil {
+			return nil, err
+		}
+	}
 	if selector, ok := transport.config.Matrix.(interface{ SelectRoom(string) error }); ok {
 		if err := selector.SelectRoom(topology.ManagerRoomID); err != nil {
 			return nil, err
