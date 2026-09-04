@@ -315,6 +315,35 @@ func TestTransportIgnoresLeaderMessageWithoutCurrentCorrelation(t *testing.T) {
 	}
 }
 
+func TestTransportReportsSafeReasonWhenLeaderCorrelationIsMissing(t *testing.T) {
+	uncorrelated := validMatrixEvent("$old", "stdout", "", "delayed old result")
+	uncorrelated.CorrelationID = ""
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{Events: []agentteamsbridge.MatrixEvent{uncorrelated}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
+		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
+		Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }, EmptyMatrixPollLimit: 1,
+	})
+	session, err := transport.Start(context.Background(), fullStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Events(context.Background(), "saved") {
+		t.Fatal("uncorrelated event reached the executor")
+	}
+	var failure error
+	select {
+	case failure = <-session.(interface {
+		Errors(context.Context) <-chan error
+	}).Errors(context.Background()):
+	case <-time.After(time.Second):
+		t.Fatal("event stream did not report a safe terminal reason")
+	}
+	coded, ok := failure.(interface{ SafeCode() string })
+	if !ok || coded.SafeCode() != "matrix_correlation_missing" {
+		t.Fatalf("terminal error = %#v", failure)
+	}
+}
+
 func TestLeaderReplyWithoutGovernanceFieldsBindsToMissionSession(t *testing.T) {
 	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$missing", "notice", "", "")}}}}
 	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{}, Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }})

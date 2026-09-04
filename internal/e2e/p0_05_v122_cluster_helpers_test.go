@@ -377,7 +377,7 @@ func (fixture *p005V122ClusterFixture) coreBridgeJSON(method, path string, input
 	if response.StatusCode != http.StatusOK {
 		var failure map[string]any
 		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&failure)
-		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: status=%d error=%v", response.StatusCode, failure["error"])
+		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: status=%d error=%v reason=%v", response.StatusCode, failure["error"], failure["reason"])
 	}
 	if output != nil {
 		decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))

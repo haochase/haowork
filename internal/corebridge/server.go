@@ -170,7 +170,18 @@ func (server *Server) start(response http.ResponseWriter, request *http.Request)
 		}
 	}
 	if len(eventIDs) == 0 {
-		writeJSON(response, http.StatusGatewayTimeout, map[string]string{"error": "no_governed_event"})
+		failure := map[string]string{"error": "no_governed_event"}
+		if source, ok := session.(interface {
+			Errors(context.Context) <-chan error
+		}); ok {
+			select {
+			case streamErr := <-source.Errors(runContext):
+				server.report("transport_events", streamErr)
+				failure["reason"] = safeSessionFailureCode(streamErr)
+			default:
+			}
+		}
+		writeJSON(response, http.StatusGatewayTimeout, failure)
 		return
 	}
 	if err := server.state.RecordRun(input.Request, eventIDs, cursor); err != nil {
@@ -183,6 +194,16 @@ func (server *Server) start(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(response, http.StatusOK, evidence)
+}
+
+func safeSessionFailureCode(err error) string {
+	if coded, ok := err.(interface{ SafeCode() string }); ok {
+		switch coded.SafeCode() {
+		case "matrix_correlation_missing", "matrix_leader_response_missing":
+			return coded.SafeCode()
+		}
+	}
+	return "event_stream_failed"
 }
 
 func (server *Server) report(stage string, err error) {
