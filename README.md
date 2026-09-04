@@ -28,8 +28,10 @@ English version | [中文版](README_cn.md)
 > execution traces, team synchronization, signed transfers, governed local Git Commit provenance, and an
 > AgentTeams `v1.2.2` integration contract.
 > The official image inventory and a local Kind dual-namespace run were verified on 2026-08-16, including
-> the Core Bridge, Matrix, S3, Higress MCP, network isolation, and restart recovery. A physical
-> Windows/Ubuntu offline transfer and the A/B/C/D benchmark remain unverified; missing dependencies still
+> the Core Bridge, Matrix, S3, Higress MCP, network isolation, and restart recovery. On 2026-09-04, a physical
+> Windows/Ubuntu direct-media round trip passed all four handoff stages, bidirectional business-network
+> isolation, Core health checks, L3 approval, and runtime rebinding. Raw artifacts, host details, and credentials
+> remain outside this public repository. The A/B/C/D benchmark remains unverified; missing dependencies still
 > produce explicit `BLOCKED_*` results rather than simulated success.
 
 ## 🎬 Online Read-only Demo

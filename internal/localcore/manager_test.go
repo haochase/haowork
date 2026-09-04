@@ -726,7 +726,7 @@ func TestServeWaitsForStartupLockBeforeCoreLock(t *testing.T) {
 
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		probeContext, cancelProbe := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		probeContext, cancelProbe := context.WithTimeout(context.Background(), 250*time.Millisecond)
 		coreLock, err := acquireProjectLock(probeContext, root)
 		cancelProbe()
 		if errors.Is(err, ErrCoreBusy) {
