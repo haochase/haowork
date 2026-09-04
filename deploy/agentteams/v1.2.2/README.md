@@ -69,7 +69,12 @@ powershell.exe -NoProfile -File .\scripts\p0-05-v122-down.ps1
 
 真实 E2E 使用标签为 `self-hosted`、`windows`、`x64`、`haowork-agentteams-v122` 的
 受控 runner。runner 工作区必须位于非 C 盘，并预装 Docker、Kind、Helm、kubectl、Git、
-Go、Node、npm 和 PowerShell 7。以下十项值配置为 `agentteams-e2e` Environment Secrets：
+Go、Node、npm 和 PowerShell 7。Environment 只承担审批与 `main` 分支限制，不保存模型
+或网络配置。
+
+runner 进程必须在本机设置 `HAOWORK_AGENTTEAMS_ENV_FILE`，指向非 C 盘、未进入 Git 的
+`.env.local`。真实 job 使用严格白名单加载器在单个 PowerShell 进程内读取以下十项值，
+执行日志掩码后直接完成预检、部署和验收；不会写入 `$GITHUB_ENV` 或 GitHub Secrets：
 
 ```text
 HAOWORK_P005_PUBLIC_LLM_PROVIDER
@@ -84,6 +89,6 @@ HAOWORK_P005_INTERNAL_LLM_MODEL
 HAOWORK_P005_INTERNAL_EGRESS_CIDRS
 ```
 
-workflow 权限只有 `contents: read`，不上传原始 Artifact，也不执行 Commit、Push、PR 或
+workflow 权限只有 `contents: read`，不包含 `secrets.*`，不上传原始 Artifact，也不执行 Commit、Push、PR 或
 自动合并。没有手动触发真实 job 时，真实 AgentTeams E2E 状态必须记为 `NOT_RUN`；自动
 合同测试通过不能替代真实集群验收或物理双区验收。
