@@ -104,29 +104,48 @@ jobs:
           $head = (& git -C $upstream rev-parse HEAD).Trim()
           $dirty = @(& git -C $upstream status --porcelain=v1 --untracked-files=all)
           if ($head -cne '849182af8e017168a5a200a87b1062142caf462d' -or $dirty.Count -ne 0) { throw 'BLOCKED_UPSTREAM_SOURCE' }
-      - name: Preflight real environment
+      - name: Run protected real E2E with runner-local configuration
         shell: powershell
-        env: &agentteams-runtime
-          HAOWORK_P005_PUBLIC_LLM_PROVIDER: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_PROVIDER }}
-          HAOWORK_P005_PUBLIC_LLM_BASE_URL: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_BASE_URL }}
-          HAOWORK_P005_PUBLIC_LLM_API_KEY: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_API_KEY }}
-          HAOWORK_P005_PUBLIC_LLM_MODEL: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_MODEL }}
-          HAOWORK_P005_PUBLIC_EGRESS_CIDRS: ${{ secrets.HAOWORK_P005_PUBLIC_EGRESS_CIDRS }}
-          HAOWORK_P005_INTERNAL_LLM_PROVIDER: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_PROVIDER }}
-          HAOWORK_P005_INTERNAL_LLM_BASE_URL: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_BASE_URL }}
-          HAOWORK_P005_INTERNAL_LLM_API_KEY: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_API_KEY }}
-          HAOWORK_P005_INTERNAL_LLM_MODEL: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_MODEL }}
-          HAOWORK_P005_INTERNAL_EGRESS_CIDRS: ${{ secrets.HAOWORK_P005_INTERNAL_EGRESS_CIDRS }}
-        run: .\scripts\p0-05-v122-preflight.ps1 -Mode LocalDualNamespace -ClusterName '${{ inputs.cluster_name }}' -Json
-      - name: Deploy isolated AgentTeams releases
-        shell: powershell
-        env: *agentteams-runtime
-        run: .\scripts\p0-05-v122-up.ps1 -Mode LocalDualNamespace -ClusterName '${{ inputs.cluster_name }}'
-      - name: Run real AgentTeams acceptance
-        shell: powershell
-        env: *agentteams-runtime
-        run: .\scripts\p0-05-v122-cluster-test.ps1 -ClusterName '${{ inputs.cluster_name }}'
+        env:
+          HAOWORK_E2E_CLUSTER_NAME: ${{ inputs.cluster_name }}
+        run: |
+          $configPath = [Environment]::GetEnvironmentVariable('HAOWORK_AGENTTEAMS_ENV_FILE', 'Process')
+          if ([string]::IsNullOrWhiteSpace($configPath) -or -not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+            throw 'BLOCKED_RUNNER_LOCAL_ENV_FILE'
+          }
+          $configPath = [IO.Path]::GetFullPath($configPath)
+          if ([IO.Path]::GetPathRoot($configPath) -match '^[Cc]:\\') { throw 'BLOCKED_C_DRIVE_ENV_FILE' }
+
+          . .\scripts\p0-05-v122-env.ps1
+          Import-P005V122LocalEnvironment -Path $configPath
+          $required = @(
+            'HAOWORK_P005_PUBLIC_LLM_PROVIDER',
+            'HAOWORK_P005_PUBLIC_LLM_BASE_URL',
+            'HAOWORK_P005_PUBLIC_LLM_API_KEY',
+            'HAOWORK_P005_PUBLIC_LLM_MODEL',
+            'HAOWORK_P005_PUBLIC_EGRESS_CIDRS',
+            'HAOWORK_P005_INTERNAL_LLM_PROVIDER',
+            'HAOWORK_P005_INTERNAL_LLM_BASE_URL',
+            'HAOWORK_P005_INTERNAL_LLM_API_KEY',
+            'HAOWORK_P005_INTERNAL_LLM_MODEL',
+            'HAOWORK_P005_INTERNAL_EGRESS_CIDRS'
+          )
+          foreach ($name in $required) {
+            $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if ([string]::IsNullOrWhiteSpace($value) -or $value -match '[\r\n]') { throw "BLOCKED_RUNNER_LOCAL_ENV:$name" }
+            Write-Output "::add-mask::$value"
+          }
+
+          $clusterName = $env:HAOWORK_E2E_CLUSTER_NAME
+          & .\scripts\p0-05-v122-preflight.ps1 -Mode LocalDualNamespace -ClusterName $clusterName -Json
+          if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_REAL_PREFLIGHT' }
+          & .\scripts\p0-05-v122-up.ps1 -Mode LocalDualNamespace -ClusterName $clusterName
+          if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_REAL_DEPLOYMENT' }
+          & .\scripts\p0-05-v122-cluster-test.ps1 -ClusterName $clusterName
+          if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_REAL_ACCEPTANCE' }
       - name: Tear down owned Kind resources
         if: always()
         shell: powershell
-        run: .\scripts\p0-05-v122-down.ps1 -ClusterName '${{ inputs.cluster_name }}' -DeleteCluster
+        env:
+          HAOWORK_E2E_CLUSTER_NAME: ${{ inputs.cluster_name }}
+        run: .\scripts\p0-05-v122-down.ps1 -ClusterName $env:HAOWORK_E2E_CLUSTER_NAME -DeleteCluster
