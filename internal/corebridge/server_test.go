@@ -140,6 +140,22 @@ func TestServerPersistsTransportBoundRuntimeRevision(t *testing.T) {
 	}
 }
 
+func TestServerReturnsOnlySafeSessionFailureReason(t *testing.T) {
+	state, err := corebridge.OpenState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	starter := &fakeStarter{terminalErr: safeTestError{code: "matrix_correlation_missing"}, pages: [][]executor.AgentTeamsEvent{{}}}
+	server, err := corebridge.NewServer(corebridge.Config{Token: "bridge-token", State: state, Factory: func(model.MissionEnvelope) (corebridge.Starter, error) { return starter, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := invoke(t, server, http.MethodPost, "/v1/runs/start", "bridge-token", startPayload(t, "WORK-1"))
+	if response.Code != http.StatusGatewayTimeout || !strings.Contains(response.Body.String(), `"reason":"matrix_correlation_missing"`) || strings.Contains(response.Body.String(), "private detail") {
+		t.Fatalf("response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestServerRequiresBearerAndReportsRealReadiness(t *testing.T) {
 	state, err := corebridge.OpenState(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -233,6 +249,7 @@ type fakeStarter struct {
 	pages         [][]executor.AgentTeamsEvent
 	cursors       []string
 	boundRevision int
+	terminalErr   error
 }
 
 func (starter *fakeStarter) Start(_ context.Context, request executor.AgentTeamsStartRequest) (executor.AgentTeamsSession, error) {
@@ -245,13 +262,14 @@ func (starter *fakeStarter) Start(_ context.Context, request executor.AgentTeams
 	if starter.boundRevision > 0 {
 		boundRequest.RuntimeBindingRevision = starter.boundRevision
 	}
-	return &fakeSession{starter: starter, events: events, boundRequest: boundRequest}, nil
+	return &fakeSession{starter: starter, events: events, boundRequest: boundRequest, terminalErr: starter.terminalErr}, nil
 }
 
 type fakeSession struct {
 	starter      *fakeStarter
 	events       []executor.AgentTeamsEvent
 	boundRequest executor.AgentTeamsStartRequest
+	terminalErr  error
 }
 
 func (session *fakeSession) Events(_ context.Context, cursor string) <-chan executor.AgentTeamsEvent {
@@ -264,11 +282,22 @@ func (session *fakeSession) Events(_ context.Context, cursor string) <-chan exec
 	return result
 }
 
-func (*fakeSession) Errors(context.Context) <-chan error { return make(chan error) }
-func (*fakeSession) Cancel(context.Context) error        { return nil }
+func (session *fakeSession) Errors(context.Context) <-chan error {
+	result := make(chan error, 1)
+	if session.terminalErr != nil {
+		result <- session.terminalErr
+	}
+	return result
+}
+func (*fakeSession) Cancel(context.Context) error { return nil }
 func (session *fakeSession) BoundRequest() executor.AgentTeamsStartRequest {
 	return session.boundRequest
 }
+
+type safeTestError struct{ code string }
+
+func (failure safeTestError) Error() string    { return "private detail" }
+func (failure safeTestError) SafeCode() string { return failure.code }
 
 func invoke(t *testing.T, handler http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()

@@ -175,7 +175,7 @@ func TestMatrixMessagesPreserveOpaquePaginationToken(t *testing.T) {
     "type":"m.room.message",
     "event_id":"$event-001",
     "sender":"@worker-build:matrix.test",
-    "content":{"msgtype":"m.text","body":"HAOWORK_CORRELATION_ID: haowork-0123456789abcdef0123456789abcdef\ndo not persist this Matrix message","org.haowork.workspace_digest":"workspace-sha","org.haowork.mission_id":"MSN-001","org.haowork.run_id":"RUN-001","org.haowork.work_item_id":"WKI-001","org.haowork.artifacts":[{"uri":"environments/public/missions/MSN-001/artifacts/abc","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environmentID":"public","size":42}]}
+    "content":{"msgtype":"m.text","body":"Completion summary follows.\nHAOWORK_CORRELATION_ID: haowork-0123456789abcdef0123456789abcdef\ndo not persist this Matrix message","org.haowork.workspace_digest":"workspace-sha","org.haowork.mission_id":"MSN-001","org.haowork.run_id":"RUN-001","org.haowork.work_item_id":"WKI-001","org.haowork.artifacts":[{"uri":"environments/public/missions/MSN-001/artifacts/abc","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environmentID":"public","size":42}]}
   }]
 }`))
 	}))
@@ -195,7 +195,7 @@ func TestMatrixMessagesPreserveOpaquePaginationToken(t *testing.T) {
 	if page.Events[0].Summary != "" || page.Events[0].SummarySHA256 == "" || page.Events[0].CorrelationID != "haowork-0123456789abcdef0123456789abcdef" || page.Events[0].WorkspaceDigest != "workspace-sha" || page.Events[0].MissionID != "MSN-001" || page.Events[0].RunID != "RUN-001" || page.Events[0].WorkItemID != "WKI-001" || len(page.Events[0].Artifacts) != 1 || page.Events[0].Artifacts[0].SHA256 != strings.Repeat("a", 64) {
 		t.Fatalf("Matrix message body leaked into event = %#v", page.Events[0])
 	}
-	digest := sha256.Sum256([]byte("HAOWORK_CORRELATION_ID: haowork-0123456789abcdef0123456789abcdef\ndo not persist this Matrix message"))
+	digest := sha256.Sum256([]byte("Completion summary follows.\nHAOWORK_CORRELATION_ID: haowork-0123456789abcdef0123456789abcdef\ndo not persist this Matrix message"))
 	if page.Events[0].SummarySHA256 != hex.EncodeToString(digest[:]) {
 		t.Fatalf("summary digest = %q", page.Events[0].SummarySHA256)
 	}

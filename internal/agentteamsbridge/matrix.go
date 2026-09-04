@@ -319,18 +319,21 @@ func matrixTimelinePage(roomID, nextCursor string, more bool, events []matrixTim
 }
 
 func matrixCorrelationID(body string) string {
+	found := ""
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || !strings.HasPrefix(line, "HAOWORK_CORRELATION_ID:") {
 			continue
 		}
 		value := strings.TrimSpace(strings.TrimPrefix(line, "HAOWORK_CORRELATION_ID:"))
 		if line == "HAOWORK_CORRELATION_ID: "+value && isMatrixCorrelationID(value) {
-			return value
+			if found != "" && found != value {
+				return ""
+			}
+			found = value
 		}
-		return ""
 	}
-	return ""
+	return found
 }
 
 func isMatrixCorrelationID(value string) bool {

@@ -197,6 +197,11 @@ type senderIdentity struct {
 	bindingRevision int
 }
 
+type safeSessionError string
+
+func (failure safeSessionError) Error() string    { return string(failure) }
+func (failure safeSessionError) SafeCode() string { return string(failure) }
+
 func topologyRuntimeBindings(topology RuntimeTopology, mission model.MissionEnvelope, request executor.AgentTeamsStartRequest) []model.RuntimeBinding {
 	principalFor := map[model.AgentFunction]string{
 		model.FunctionManager:        topology.ManagerPrincipalID,
@@ -272,6 +277,7 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 		}
 		seen := make(map[string]struct{})
 		emptyPolls := 0
+		leaderCorrelationMissing := false
 		for {
 			page, err := session.transport.config.Matrix.Sync(ctx, cursor)
 			if err != nil {
@@ -297,6 +303,7 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 					continue
 				}
 				if event.CorrelationID != session.correlationID {
+					leaderCorrelationMissing = true
 					continue
 				}
 				if _, ok := seen[event.ID]; ok {
@@ -326,8 +333,16 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 				}
 			}
 			if !page.More {
+				if emitted {
+					return
+				}
 				emptyPolls++
-				if emitted || session.transport.config.EmptyMatrixPollLimit <= 0 || emptyPolls >= session.transport.config.EmptyMatrixPollLimit {
+				if session.transport.config.EmptyMatrixPollLimit <= 0 || emptyPolls >= session.transport.config.EmptyMatrixPollLimit {
+					code := safeSessionError("matrix_leader_response_missing")
+					if leaderCorrelationMissing {
+						code = safeSessionError("matrix_correlation_missing")
+					}
+					session.recordError(code)
 					return
 				}
 				if page.NextCursor != "" && page.NextCursor != cursor {
