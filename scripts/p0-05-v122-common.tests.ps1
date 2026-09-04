@@ -4,6 +4,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $cacheRoot = Join-Path $repoRoot '.haowork\cache'
 $upstreamRoot = Join-Path $cacheRoot 'upstream\AgentTeams-v1.2.2'
 $contractPath = Join-Path $repoRoot 'deploy\agentteams\v1.2.2\upstream.lock.json'
+New-Item -ItemType Directory -Force (Join-Path $cacheRoot 'tmp') | Out-Null
 
 . (Join-Path $PSScriptRoot 'p0-05-v122-common.ps1')
 
