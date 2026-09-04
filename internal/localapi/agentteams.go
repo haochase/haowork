@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 // Implementations must perform their own provenance and approval checks.
 type TransferFacade interface {
 	Export(context.Context, json.RawMessage) ([]byte, error)
+	BuildReturn(context.Context, json.RawMessage) (transfer.ReturnDelta, error)
 	Preview(context.Context, []byte) (transfer.ImportPreview, error)
 	Apply(context.Context, transfer.ImportPreview, model.Actor) error
 }
@@ -47,6 +49,23 @@ func (facade projectTransferFacade) Export(_ context.Context, payload json.RawMe
 		return nil, errors.New("invalid signed transfer request")
 	}
 	return transfer.ExportBytes(transfer.ExportInput{Manifest: input.Manifest, Entries: input.Entries, Signer: facade.service.ReturnSigner, ProvenanceVerifier: facade.service.ProvenanceVerifier})
+}
+
+func (facade projectTransferFacade) BuildReturn(ctx context.Context, payload json.RawMessage) (transfer.ReturnDelta, error) {
+	if facade.service == nil {
+		return transfer.ReturnDelta{}, errors.New("transfer return requires Core-owned service")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var request transfer.ReturnRequest
+	if err := decoder.Decode(&request); err != nil {
+		return transfer.ReturnDelta{}, errors.New("invalid transfer return request")
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return transfer.ReturnDelta{}, errors.New("invalid transfer return request")
+	}
+	return facade.service.BuildReturn(ctx, request)
 }
 func (facade projectTransferFacade) Preview(ctx context.Context, archive []byte) (transfer.ImportPreview, error) {
 	return facade.service.PreviewImport(ctx, archive)
@@ -127,6 +146,7 @@ func (s *Server) registerAgentTeamsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/approvals", s.handleApprovals)
 	mux.HandleFunc("/api/v1/approvals/", s.handleApprovalAction)
 	mux.HandleFunc("/api/v1/transfers/export", s.handleTransferExport)
+	mux.HandleFunc("/api/v1/transfers/return", s.handleTransferReturn)
 	mux.HandleFunc("/api/v1/transfers/preview", s.handleTransferPreview)
 	mux.HandleFunc("/api/v1/transfers/", s.handleTransferApply)
 	mux.HandleFunc("/api/v1/agents/", s.handleAgentAction)
@@ -344,6 +364,38 @@ func (s *Server) handleTransferExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"archive": base64.StdEncoding.EncodeToString(archive)})
+}
+
+func (s *Server) handleTransferReturn(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
+		return
+	}
+	if s.Transfer == nil {
+		writeError(w, http.StatusServiceUnavailable, "transfer_unavailable", "transfer service is unavailable")
+		return
+	}
+	var raw json.RawMessage
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
+	if err := decoder.Decode(&raw); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid transfer return request")
+		return
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid transfer return request")
+		return
+	}
+	result, err := s.Transfer.BuildReturn(r.Context(), raw)
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, struct {
+		Archive   string            `json:"archive"`
+		Manifest  transfer.Manifest `json:"manifest"`
+		Conflicts []string          `json:"conflicts"`
+	}{Archive: base64.StdEncoding.EncodeToString(result.Archive), Manifest: result.Manifest, Conflicts: result.Conflicts})
 }
 
 func (s *Server) handleTransferPreview(w http.ResponseWriter, r *http.Request) {

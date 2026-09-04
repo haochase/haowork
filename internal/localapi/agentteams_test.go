@@ -12,7 +12,10 @@ import (
 	"github.com/haochase/haowork/internal/transfer"
 )
 
-type testTransferFacade struct{ applied bool }
+type testTransferFacade struct {
+	applied  bool
+	returned bool
+}
 
 func (facade *testTransferFacade) Export(context.Context, json.RawMessage) ([]byte, error) {
 	return []byte("archive"), nil
@@ -23,6 +26,10 @@ func (facade *testTransferFacade) Preview(context.Context, []byte) (transfer.Imp
 func (facade *testTransferFacade) Apply(context.Context, transfer.ImportPreview, model.Actor) error {
 	facade.applied = true
 	return nil
+}
+func (facade *testTransferFacade) BuildReturn(context.Context, json.RawMessage) (transfer.ReturnDelta, error) {
+	facade.returned = true
+	return transfer.ReturnDelta{Archive: []byte("return-archive"), Conflicts: []string{"scope_overlap"}}, nil
 }
 
 func TestAgentTeamsLocalAPIRequiresBrowserCookieBeforeReadingBody(t *testing.T) {
@@ -90,5 +97,24 @@ func TestTransferExportRejectsTrailingJSON(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("trailing export JSON status = %d, want 400", response.Code)
+	}
+}
+
+func TestTransferReturnRequiresCoreAndReturnsOnlyCoreProducedArchive(t *testing.T) {
+	facade := &testTransferFacade{}
+	server := &Server{Sessions: NewSessionStore(), Transfer: facade}
+	response := jsonRequest(t, server, http.MethodPost, "/api/v1/transfers/return", map[string]any{"request": "approved"}, authenticatedCookie(t, server))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("return status = %d, want 201; body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Archive   string   `json:"archive"`
+		Conflicts []string `json:"conflicts"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Archive != "cmV0dXJuLWFyY2hpdmU=" || len(payload.Conflicts) != 1 || payload.Conflicts[0] != "scope_overlap" || !facade.returned {
+		t.Fatalf("return response=%#v returned=%t", payload, facade.returned)
 	}
 }

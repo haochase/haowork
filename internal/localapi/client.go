@@ -71,6 +71,30 @@ func (c *Client) SCMStatus(ctx context.Context) (SCMStatusResponse, error) {
 	return response, nil
 }
 
+func (c *Client) GitHubSCMStatus(ctx context.Context) (GitHubSCMStatusResponse, error) {
+	var response GitHubSCMStatusResponse
+	if err := c.doJSON(ctx, http.MethodGet, scmPath+"/github/status", nil, &response); err != nil {
+		return GitHubSCMStatusResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ConnectGitHubSCM(ctx context.Context, actor model.Actor) (model.SCMRemote, error) {
+	var response model.SCMRemote
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/github/connect", githubSCMActionRequest{Actor: actor}, &response); err != nil {
+		return model.SCMRemote{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) SyncGitHubSCM(ctx context.Context, actor model.Actor) (app.RemoteSCMSyncReport, error) {
+	var response app.RemoteSCMSyncReport
+	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/github/sync", githubSCMActionRequest{Actor: actor}, &response); err != nil {
+		return app.RemoteSCMSyncReport{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) RegisterSCM(ctx context.Context, actor model.Actor) (model.SCMRepository, error) {
 	var response model.SCMRepository
 	if err := c.doJSON(ctx, http.MethodPost, scmPath+"/register", actorPayload{Actor: actor}, &response); err != nil {
@@ -301,6 +325,22 @@ func (c *Client) ExportTransfer(ctx context.Context, request []byte) ([]byte, er
 		return nil, err
 	}
 	return base64.StdEncoding.DecodeString(response.Archive)
+}
+
+// BuildTransferReturn asks the local Core to create an approved, signed return archive.
+func (c *Client) BuildTransferReturn(ctx context.Context, request []byte) ([]byte, []string, error) {
+	var response struct {
+		Archive   string   `json:"archive"`
+		Conflicts []string `json:"conflicts"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/transfers/return", json.RawMessage(request), &response); err != nil {
+		return nil, nil, err
+	}
+	archive, err := base64.StdEncoding.DecodeString(response.Archive)
+	if err != nil {
+		return nil, nil, err
+	}
+	return archive, response.Conflicts, nil
 }
 func (c *Client) ApplyTransfer(ctx context.Context, hash string, actor model.Actor, confirmed bool) error {
 	return c.doJSON(ctx, http.MethodPost, "/api/v1/transfers/"+url.PathEscape(hash)+"/apply", transferApplyRequest{PreviewHash: hash, Actor: actor, Confirmed: confirmed}, nil)

@@ -194,6 +194,8 @@ func mapError(err error) error {
 			return errors.New(apiError.Error())
 		case 401, 503:
 			return &CodedError{Code: ExitOffline, Err: apiError}
+		case 410, 429, 500, 502, 504:
+			return &CodedError{Code: ExitOffline, Err: apiError}
 		case 403:
 			return &CodedError{Code: ExitApproval, Err: apiError}
 		case 409:

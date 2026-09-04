@@ -78,7 +78,13 @@ label, legend { color: #5e7279; font-size: 12px; font-weight: 600; }label { disp
 .scm-decision { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding-top: 10px; border-top: 1px solid #e3eaeb; }
 .scm-decision .confirm-row { grid-column: 1 / -1; }
 .scm-decision input { min-width: 0; }
-@media (max-width: 760px) {
+.scm-remote-panel { overflow: hidden; background: #f9fbfb; border: 1px solid #d6e0e2; border-radius: 7px; box-shadow: 0 7px 20px rgb(36 58 69 / 5%); }
+.scm-remote-summary { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 24px; margin: 0; padding: 12px 18px; border-bottom: 1px solid #e3eaeb; background: #f1f6f6; }
+.scm-remote-summary > div { display: grid; gap: 3px; }.scm-remote-summary dt { color: #718288; font-size: 11px; }.scm-remote-summary dd { margin: 0; color: #30464c; font-weight: 700; }.scm-remote-summary button { margin-left: auto; }
+.scm-remote-refs { display: grid; gap: 7px; padding: 11px 18px; border-bottom: 1px solid #e3eaeb; }.scm-remote-refs ul, .scm-remote-facts ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }.scm-remote-refs li { display: grid; grid-template-columns: minmax(150px, 1fr) 80px 90px; gap: 10px; color: #5e747b; font-size: 11px; }.scm-remote-refs code { overflow-wrap: anywhere; color: #38545c; }
+.scm-remote-layout { display: grid; grid-template-columns: minmax(190px, 32%) minmax(0, 1fr); min-height: 250px; }.scm-remote-pulls { max-height: 420px; overflow: auto; margin: 0; padding: 8px; border-right: 1px solid #e3eaeb; list-style: none; }.scm-remote-pulls button { display: grid; width: 100%; gap: 6px; padding: 10px; border: 0; border-radius: 4px; background: transparent; color: #344b53; text-align: left; }.scm-remote-pulls button:hover, .scm-remote-pulls button.selected { background: #e8f1f2; }.scm-remote-pulls button > span { display: flex; justify-content: space-between; align-items: center; gap: 7px; }.scm-remote-pulls small { color: #71848a; font-size: 11px; }
+.scm-remote-detail { display: grid; align-content: start; gap: 14px; min-width: 0; padding: 16px 18px; }.scm-remote-detail h3 { margin-top: 4px; font-size: 16px; }.scm-remote-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding-top: 12px; border-top: 1px solid #e3eaeb; }.scm-remote-facts section { display: grid; gap: 7px; min-width: 0; }.scm-remote-facts li { display: flex; flex-wrap: wrap; gap: 7px; justify-content: space-between; color: #5e747b; font-size: 11px; }.scm-remote-facts code { overflow-wrap: anywhere; color: #38545c; }.scm-remote-facts b { color: #2b7659; }
+@media (max-width: 900px) {
   body { min-width: 0; }
   .workbench-shell { padding: 10px; }
   .overview-band, .workbench-grid { grid-template-columns: 1fr; }
@@ -90,4 +96,5 @@ label, legend { color: #5e7279; font-size: 12px; font-weight: 600; }label { disp
   .scm-commit-list { max-height: 240px; border-right: 0; border-bottom: 1px solid #e3eaeb; }
   .scm-decision { grid-template-columns: 1fr; }
   .scm-decision .confirm-row { grid-column: auto; }
+  .scm-remote-summary { align-items: stretch; }.scm-remote-summary button { width: 100%; margin-left: 0; }.scm-remote-refs li { grid-template-columns: 1fr; gap: 3px; }.scm-remote-layout, .scm-remote-facts { grid-template-columns: 1fr; }.scm-remote-pulls { max-height: 230px; border-right: 0; border-bottom: 1px solid #e3eaeb; }
 }

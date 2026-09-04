@@ -20,6 +20,7 @@ import (
 	"github.com/haochase/haowork/internal/changes"
 	"github.com/haochase/haowork/internal/core"
 	"github.com/haochase/haowork/internal/evidence"
+	"github.com/haochase/haowork/internal/githubscm"
 	localindex "github.com/haochase/haowork/internal/index"
 	"github.com/haochase/haowork/internal/localcore"
 	"github.com/haochase/haowork/internal/model"
@@ -1238,6 +1239,7 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, message sseMessage) b
 
 func writeDomainError(w http.ResponseWriter, err error) {
 	var apiErr *teamapi.APIError
+	var githubErr *githubscm.APIError
 	var conflictErr *teamapi.ConflictError
 	switch {
 	case errors.Is(err, teamsync.ErrOffline), errors.Is(err, team.ErrNotWritable):
@@ -1248,6 +1250,12 @@ func writeDomainError(w http.ResponseWriter, err error) {
 			status = http.StatusBadGateway
 		}
 		writeError(w, status, apiErr.Code, apiErr.Message)
+	case errors.As(err, &githubErr):
+		status := githubErr.StatusCode
+		if status < 400 {
+			status = http.StatusBadGateway
+		}
+		writeError(w, status, githubErr.Code, "GitHub dependency unavailable")
 	case errors.As(err, &conflictErr), errors.Is(err, teamsync.ErrStaleCursor):
 		writeError(w, http.StatusConflict, "conflict", "Team history requires explicit reconciliation")
 	case errors.Is(err, app.ErrConflict):

@@ -180,9 +180,9 @@ flowchart TB
     FILES --> PROOF
 ```
 
-The first native SCM slice binds an explicitly selected, immutable local Git Commit to Goal, Task, Mission, and
-projected Evidence. Push, Pull Request, webhook, and hosted-provider integrations remain future work and are not
-presented as complete.
+The native SCM layer binds an explicitly selected, immutable local Git Commit to Goal, Task, Mission, and projected
+Evidence. GitHub `github.com` ref, Pull Request, Review, Check Run, and Commit Status facts are also available through
+a GET-only observer. GitHub writes, webhooks, GitLab, and other hosted-provider integrations remain future work.
 
 ## 🔗 Governed Git Commit Provenance
 
@@ -204,6 +204,10 @@ local Git repository -> full Commit OID -> read-only object inspection
 
 Use `haowork scm --help` or the Workbench **Git / SCM** panel. See
 [`docs/scm-provenance.md`](docs/scm-provenance.md) for the exact policy and current boundaries.
+
+For GitHub observation, use `haowork scm github connect`, `sync`, and `status` with a running Local Core. The observer
+derives repository identity from local `origin`, records no token or PR body, and never turns a merged PR or successful
+check into Task completion. See [`docs/scm-github-observer.md`](docs/scm-github-observer.md).
 
 ## 🔄 How a Requirement Flows
 
@@ -338,7 +342,7 @@ missing, acceptance scripts must return `BLOCKED_*`. See
 
 ## 🗺️ Next Stage
 
-- Bind Requirements, Missions, and Evidence natively to Git Commit, Push, and Pull Request records.
+- Extend read-only hosted SCM observation beyond GitHub `github.com`, without adding hosted SCM write control.
 - Improve Workbench views for requirement versions, architecture constraints, responsibility matrices, and drift review.
 - Expand GoalVersion drift analysis and impact queries for refactoring decisions.
 - Complete legacy-project baseline import, candidate relationship analysis, and human confirmation workflows.
@@ -348,6 +352,7 @@ missing, acceptance scripts must return `BLOCKED_*`. See
 ## 📚 Documentation
 
 - [Product Design and Engineering Governance Model](docs/product-design.md)
+- [GitHub Remote SCM Read-Only Observation](docs/scm-github-observer.md)
 - [AgentTeams Integration Boundaries](docs/agentteams.md)
 - [CLI Guide](docs/cli.md)
 - [Workbench Guide](docs/workbench.md)

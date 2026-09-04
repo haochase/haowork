@@ -89,6 +89,9 @@ func TestOpenConfiguresSCMOnlyForGitProjectRoot(t *testing.T) {
 	if !project.SCMAvailable {
 		t.Fatal("Git project did not report SCM available")
 	}
+	if !project.GitHubSCMAvailable {
+		t.Fatal("Git project did not configure GitHub SCM observation")
+	}
 	if _, err := project.Service.RegisterSCM(ctx, model.Actor{ID: "USR-OWNER", Kind: model.ActorHuman, Role: model.RoleOwner}); err != nil {
 		t.Fatalf("register configured SCM: %v", err)
 	}

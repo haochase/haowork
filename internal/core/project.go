@@ -5,9 +5,11 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/haochase/haowork/internal/agentteamsbridge"
 	"github.com/haochase/haowork/internal/app"
@@ -15,6 +17,7 @@ import (
 	"github.com/haochase/haowork/internal/changes"
 	"github.com/haochase/haowork/internal/eventstore"
 	"github.com/haochase/haowork/internal/executor"
+	"github.com/haochase/haowork/internal/githubscm"
 	"github.com/haochase/haowork/internal/model"
 	"github.com/haochase/haowork/internal/scm"
 	"github.com/haochase/haowork/internal/skillapi"
@@ -33,7 +36,9 @@ type Dependencies struct {
 	Transfer   *TransferConfig
 	// AgentTeams configures the only production external executor path. A nil
 	// value leaves the local project usable without an external deployment.
-	AgentTeams *agentteamsbridge.ProductionConfig
+	AgentTeams   *agentteamsbridge.ProductionConfig
+	GitHubTokens githubscm.TokenSource
+	GitHubHTTP   *http.Client
 }
 
 // TransferConfig contains the environment-specific capabilities that core
@@ -62,6 +67,8 @@ type Project struct {
 	Transfer *transfer.Service
 	// SCMAvailable indicates that the project root is a local Git worktree.
 	SCMAvailable bool
+	// GitHubSCMAvailable indicates that this Git project can connect a read-only GitHub observer.
+	GitHubSCMAvailable bool
 	// SkillAdapters are project-owned runtime wiring; the MCP surface never opens event files.
 	SkillAdapters skillapi.AdapterMap
 }
@@ -156,6 +163,23 @@ func Open(ctx context.Context, start string, deps Dependencies) (Project, error)
 	if err != nil {
 		return Project{}, err
 	}
+	githubSCMAvailable := false
+	if scmAvailable {
+		tokens := deps.GitHubTokens
+		if tokens == nil {
+			tokens = githubscm.EnvironmentTokenSource{}
+		}
+		clock := time.Now
+		if deps.Clock != nil {
+			clock = deps.Clock.Now
+		}
+		inspector := scm.NewInspector()
+		observer := githubscm.NewObserver(githubscm.NewClient(tokens, deps.GitHubHTTP), githubscm.NewFileStore(root), inspector.Runner, root, clock)
+		if err := service.ConfigureRemoteSCM(observer, root); err != nil {
+			return Project{}, fmt.Errorf("configure GitHub SCM observation: %w", err)
+		}
+		githubSCMAvailable = true
+	}
 	adapters := skillapi.CoreAdapters(service)
 	if deps.CrossZone != nil {
 		adapters = skillapi.CoreAdaptersWithCrossZone(service, *deps.CrossZone)
@@ -178,14 +202,15 @@ func Open(ctx context.Context, start string, deps Dependencies) (Project, error)
 		return Project{}, err
 	}
 	return Project{
-		Root:          root,
-		Manifest:      manifest,
-		Service:       service,
-		Events:        events,
-		Team:          joined,
-		Transfer:      transferService,
-		SCMAvailable:  scmAvailable,
-		SkillAdapters: adapters,
+		Root:               root,
+		Manifest:           manifest,
+		Service:            service,
+		Events:             events,
+		Team:               joined,
+		Transfer:           transferService,
+		SCMAvailable:       scmAvailable,
+		GitHubSCMAvailable: githubSCMAvailable,
+		SkillAdapters:      adapters,
 	}, nil
 }
 

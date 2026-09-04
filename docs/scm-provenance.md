@@ -70,6 +70,15 @@ askpass、外部 diff、pager、replace object 和全局配置的环境变量。
 
 - 自动 `git commit` 或 `git push`；
 - Git hooks；
-- GitHub/GitLab API、webhook、Pull Request 或 Review 状态；
+- GitLab API、GitHub Webhook、GitHub App、GitHub 写操作或自动 Pull Request / Review / merge；
 - 自动猜测历史 Commit 与需求的关系；
 - 以 Commit 绑定替代 Evidence、审批或 Task 完成门禁。
+
+## 7. GitHub 远端观察
+
+GitHub `github.com` 的受监控 ref、Pull Request、Review、Check Run 和 Commit Status 可以作为只读观察事实
+进入同一 SCM 投影，并通过完整 Commit OID 与本地 Commit / Binding 对账。观察器不读取 PR/Review 正文、评论、
+diff、Check 日志或完整用户身份，也不执行任何 GitHub 写请求。
+
+PR 已合并或 Check `success` 不会自动确认绑定、创建 Evidence 或完成 Task。轮询只能比较同步快照，不能证明完整
+Push 历史。具体配置、最小权限和命令见 [GitHub 远端 SCM 只读观察](scm-github-observer.md)。

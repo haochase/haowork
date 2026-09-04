@@ -205,4 +205,25 @@ describe("local API client", () => {
       actor,
     });
   });
+
+  it("routes GitHub SCM observation without browser-owned repository or token fields", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ runtime: { connected: false, authenticated: false, rate_limit_remaining: -1 }, refs: [], pull_requests: [], reviews: [], checks: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "RSCM-001", provider: "github" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ refs: 1, pull_requests: 1, reviews: 0, checks: 2, appended: 4, synced_at: "2026-08-24T00:00:00Z" }), { status: 200 }));
+    const client = createApiClient({ fetcher });
+    const actor = { id: "owner", kind: "human", role: "owner" } as const;
+
+    await client.getGitHubSCMStatus?.();
+    await client.connectGitHubSCM?.(actor);
+    await client.syncGitHubSCM?.(actor);
+
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+      "/api/v1/scm/github/status",
+      "/api/v1/scm/github/connect",
+      "/api/v1/scm/github/sync",
+    ]);
+    expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toEqual({ actor });
+    expect(JSON.parse(String(fetcher.mock.calls[2]?.[1]?.body))).toEqual({ actor });
+  });
 });

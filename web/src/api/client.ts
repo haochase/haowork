@@ -30,6 +30,9 @@ import type {
   CommitObservation,
   SCMBinding,
   SCMHistoryReport,
+  GitHubSCMStatus,
+  GitHubSCMSyncReport,
+  SCMRemote,
 } from "./types";
 
 const API_PREFIX = "/api/v1";
@@ -100,6 +103,9 @@ export interface ApiClient {
   confirmSCMBinding?(id: string, actor: Actor): Promise<SCMBinding>;
   rejectSCMBinding?(id: string, reason: string, actor: Actor): Promise<SCMBinding>;
   verifySCMHistory?(repositoryId: string, refs: string[], actor: Actor): Promise<SCMHistoryReport>;
+  getGitHubSCMStatus?(): Promise<GitHubSCMStatus>;
+  connectGitHubSCM?(actor: Actor): Promise<SCMRemote>;
+  syncGitHubSCM?(actor: Actor): Promise<GitHubSCMSyncReport>;
 }
 
 export interface EventSourceLike {
@@ -270,6 +276,9 @@ export function createApiClient(options: ClientOptions = {}): ApiClient {
     confirmSCMBinding: (id, actor) => request<SCMBinding>(fetcher, `${API_PREFIX}/scm/bindings/${encodeURIComponent(id)}/confirm`, jsonBody({ actor })),
     rejectSCMBinding: (id, reason, actor) => request<SCMBinding>(fetcher, `${API_PREFIX}/scm/bindings/${encodeURIComponent(id)}/reject`, jsonBody({ reason, actor })),
     verifySCMHistory: (repositoryId, refs, actor) => request<SCMHistoryReport>(fetcher, `${API_PREFIX}/scm/history/verify`, jsonBody({ repository_id: repositoryId, refs, actor })),
+    getGitHubSCMStatus: () => request<GitHubSCMStatus>(fetcher, `${API_PREFIX}/scm/github/status`),
+    connectGitHubSCM: (actor) => request<SCMRemote>(fetcher, `${API_PREFIX}/scm/github/connect`, jsonBody({ actor })),
+    syncGitHubSCM: (actor) => request<GitHubSCMSyncReport>(fetcher, `${API_PREFIX}/scm/github/sync`, jsonBody({ actor })),
 
     subscribe: (onChange) => {
       let closed = false;
