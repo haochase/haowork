@@ -13,7 +13,7 @@ import (
 )
 
 func TestClientUsesOnlyVersionedConditionalGETAndRedactsToken(t *testing.T) {
-	const token = "github_pat_secret_value"
+	const token = "unit-test-token"
 	var methods []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		methods = append(methods, request.Method)
@@ -30,7 +30,7 @@ func TestClientUsesOnlyVersionedConditionalGETAndRedactsToken(t *testing.T) {
 			t.Errorf("authorization header is missing")
 		}
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"Bad credentials github_pat_secret_value"}`))
+		_, _ = w.Write([]byte(`{"message":"Bad credentials unit-test-token"}`))
 	}))
 	defer server.Close()
 	client := newTestClient(t, server, staticTokenSource{token: token})
