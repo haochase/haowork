@@ -46,3 +46,18 @@ func TestTransferReturnCommandIsAvailableBeforeOpeningLocalCore(t *testing.T) {
 		t.Fatalf("return command is not registered: %q", stderr.String())
 	}
 }
+
+func TestTransferReturnApprovalRequestCommandIsAvailableBeforeOpeningLocalCore(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "return-request.json")
+	if err := os.WriteFile(input, []byte(`{"Base":{"TransferID":"XFR-001"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := cli.Execute(context.Background(), []string{"--json", "--project", t.TempDir(), "transfer", "request-return-approval", "--input", input, "--actor", "AGT-BUILD"}, &stdout, &stderr)
+	if code != cli.ExitOffline {
+		t.Fatalf("request-return-approval exit=%d, want offline Core; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(strings.ToLower(stderr.String()), "unknown command") {
+		t.Fatalf("request-return-approval command is not registered: %q", stderr.String())
+	}
+}

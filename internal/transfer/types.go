@@ -233,4 +233,5 @@ type Service struct {
 	ApprovalVerifier       ApprovalVerifier
 	ProvenanceVerifier     ProvenanceVerifier
 	Now                    func() time.Time
+	ReturnTTL              time.Duration
 }

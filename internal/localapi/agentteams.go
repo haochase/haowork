@@ -119,6 +119,11 @@ type transferArchiveRequest struct {
 	Actor     model.Actor `json:"actor,omitempty"`
 	Confirmed bool        `json:"confirmed,omitempty"`
 }
+
+type transferReturnApprovalRequest struct {
+	Request transfer.ReturnRequest `json:"request"`
+	Actor   model.Actor            `json:"actor"`
+}
 type transferPreviewResponse struct {
 	PreviewHash    string                     `json:"preview_hash"`
 	Manifest       transfer.Manifest          `json:"manifest"`
@@ -146,6 +151,7 @@ func (s *Server) registerAgentTeamsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/approvals", s.handleApprovals)
 	mux.HandleFunc("/api/v1/approvals/", s.handleApprovalAction)
 	mux.HandleFunc("/api/v1/transfers/export", s.handleTransferExport)
+	mux.HandleFunc("/api/v1/transfers/return-approvals", s.handleTransferReturnApprovalRequest)
 	mux.HandleFunc("/api/v1/transfers/return", s.handleTransferReturn)
 	mux.HandleFunc("/api/v1/transfers/preview", s.handleTransferPreview)
 	mux.HandleFunc("/api/v1/transfers/", s.handleTransferApply)
@@ -396,6 +402,57 @@ func (s *Server) handleTransferReturn(w http.ResponseWriter, r *http.Request) {
 		Manifest  transfer.Manifest `json:"manifest"`
 		Conflicts []string          `json:"conflicts"`
 	}{Archive: base64.StdEncoding.EncodeToString(result.Archive), Manifest: result.Manifest, Conflicts: result.Conflicts})
+}
+
+func (s *Server) handleTransferReturnApprovalRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
+		return
+	}
+	if s.Transfer == nil || s.Project.Service == nil {
+		writeError(w, http.StatusServiceUnavailable, "transfer_unavailable", "transfer service is unavailable")
+		return
+	}
+	var input transferReturnApprovalRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid transfer return approval request")
+		return
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid transfer return approval request")
+		return
+	}
+	if input.Request.Base.TransferID == "" || !hasApprovedReturnEntry(input.Request) {
+		writeError(w, http.StatusBadRequest, "invalid_request", "transfer return approval requires an approved change")
+		return
+	}
+	payloadHash := transfer.ReturnApprovalHash(input.Request)
+	approval, err := s.Project.Service.RequestApproval(r.Context(), "transfer", input.Request.Base.TransferID+"-return", payloadHash, "L3", input.Actor)
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	if err := s.afterWrite(r.Context()); err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, approval)
+}
+
+func hasApprovedReturnEntry(request transfer.ReturnRequest) bool {
+	approved := make(map[string]struct{}, len(request.ApprovedEntryHashes))
+	for _, digest := range request.ApprovedEntryHashes {
+		approved[digest] = struct{}{}
+	}
+	for _, change := range request.Changes {
+		if _, ok := approved[transfer.EntryApprovalHash(change.Entry)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleTransferPreview(w http.ResponseWriter, r *http.Request) {

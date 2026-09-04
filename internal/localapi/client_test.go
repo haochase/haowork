@@ -13,6 +13,7 @@ import (
 	"github.com/haochase/haowork/internal/evidence"
 	"github.com/haochase/haowork/internal/localcore"
 	"github.com/haochase/haowork/internal/model"
+	"github.com/haochase/haowork/internal/transfer"
 )
 
 func TestClientRecordsAndVerifiesEvidenceWithoutRetry(t *testing.T) {
@@ -142,6 +143,33 @@ func TestClientBuildsTransferReturnThroughControlChannel(t *testing.T) {
 	}
 	if string(archive) != "return-archive" || len(conflicts) != 1 || conflicts[0] != "scope_overlap" {
 		t.Fatalf("return archive=%q conflicts=%#v", archive, conflicts)
+	}
+}
+
+func TestClientRequestsTransferReturnApprovalThroughControlChannel(t *testing.T) {
+	actor := model.Actor{ID: "AGT-BUILD", Kind: model.ActorAgent, Role: model.RoleAgent}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/transfers/return-approvals" || r.Header.Get(controlHeader) != testControlKey {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload transferReturnApprovalRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Actor != actor || payload.Request.Base.TransferID != "XFR-001" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(model.ApprovalRequest{ID: "APR-RETURN", PayloadSHA256: "return-hash", RiskLevel: "L3"})
+	}))
+	defer api.Close()
+
+	client := NewClient(localcore.Metadata{Endpoint: api.URL, ControlKey: testControlKey})
+	approval, err := client.RequestTransferReturnApproval(context.Background(), transfer.ReturnRequest{Base: transfer.Manifest{TransferID: "XFR-001"}}, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval.ID != "APR-RETURN" || approval.PayloadSHA256 != "return-hash" || approval.RiskLevel != "L3" {
+		t.Fatalf("return approval = %#v", approval)
 	}
 }
 
