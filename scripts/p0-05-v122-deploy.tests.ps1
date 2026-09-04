@@ -240,6 +240,11 @@ function Assert-DeploymentScripts {
     Assert-True ($down -match 'kubeconfig_path') 'down must require the recorded project kubeconfig before stopping a port-forward'
     Assert-True ($down -match 'run_token') 'down must require the recorded per-run token before stopping a port-forward'
     Assert-True ($down -match 'Test-P005V122ManagedBrowserCacheDirectory') 'down must only remove an exact token-bound managed port-forward cache directory'
+    foreach ($lifecycleScript in @($up, $down)) {
+        Assert-True ($lifecycleScript -match 'function Remove-P005V122ManagedBrowserCacheDirectory') 'browser cache cleanup must use an idempotent managed-directory helper'
+        Assert-True ($lifecycleScript -match 'DirectoryNotFoundException') 'browser cache cleanup must tolerate a concurrent directory removal'
+        Assert-True ($lifecycleScript -match 'BLOCKED_BROWSER_CACHE_CLEANUP') 'browser cache cleanup must still fail closed for persistent removal errors'
+    }
     Assert-True ($down -match 'Get-P005V122DeploymentOwnership') 'down must load durable deployment ownership before deleting resources'
     Assert-True ($down -match 'BLOCKED_DEPLOYMENT_OWNERSHIP') 'down must refuse cleanup without a durable ownership record'
     Assert-True ($down -match 'BLOCKED_NAMESPACE_OWNERSHIP') 'down must refuse cleanup for namespaces that are not owned by this deployment'
@@ -278,6 +283,8 @@ function Assert-OfficialSourceGate {
     Assert-True ($downSourceGateIndex -ge 0 -and $downDestructiveKindIndex -gt $downSourceGateIndex) 'down must validate the official source before invoking Kind cleanup commands'
 
     . (Join-Path $script:WorktreeRoot 'scripts\p0-05-v122-common.ps1')
+    $common = Get-FileText (Join-Path $script:WorktreeRoot 'scripts\p0-05-v122-common.ps1')
+    Assert-True ($common -match 'rev-parse\s+--git-common-dir') 'official source validation must resolve the shared repository cache from the Git common directory'
     $contract = Get-P005V122OfficialContract -ContractPath $script:LockPath
     $upstreamRoot = Join-Path $script:CacheRoot 'upstream\AgentTeams-v1.2.2'
     Assert-True (Test-P005V122OfficialSource -Contract $contract -UpstreamRoot $upstreamRoot) 'the baseline official source must satisfy the lock before drift checks'

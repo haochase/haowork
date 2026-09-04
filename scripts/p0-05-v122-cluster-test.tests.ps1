@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 $worktreeRoot = Split-Path -Parent $PSScriptRoot
 $scriptPath = Join-Path $PSScriptRoot 'p0-05-v122-cluster-test.ps1'
 $text = Get-Content -LiteralPath $scriptPath -Raw -Encoding utf8
+$coreBridgeText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'p0-05-v122-core-bridge.ps1') -Raw -Encoding utf8
 
 function Assert-True {
     param([Parameter(Mandatory)][bool]$Condition, [Parameter(Mandatory)][string]$Message)
@@ -33,6 +34,29 @@ Assert-True ($text.Contains('$forwardArguments') -and $text.Contains('-ArgumentL
 Assert-True ($text.Contains('"http://127.0.0.1:$mcpGatewayPort/mcp-servers/haowork-mcp"')) 'cluster E2E must call the deployed Higress MCP route prefix'
 Assert-True ($text.Contains("-Name 'route_name' -Pattern '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.internal$'")) 'cluster evidence must validate the official Higress internal route name separately from DNS-label fields'
 Assert-True ($text.Contains('function Get-P005V122SHA256') -and -not $text.Contains('Get-FileHash')) 'cluster evidence manifest must use its own PowerShell 5.1-compatible SHA-256 implementation'
+Assert-True ($text.Contains("([string](& `$kubectl get secret haowork-core-bridge-runtime")) 'missing Core Bridge Secret output must be converted before Trim so the explicit blocker is preserved'
+Assert-True (-not $coreBridgeText.Contains('core-bridge.token')) 'Core Bridge must not persist its bearer token outside Kubernetes'
+Assert-True ($coreBridgeText.Contains('Write-P005V122SecretFile')) 'Core Bridge must atomically create its temporary Secret input file with a protected ACL'
+$runtimeDisposeIndex = $coreBridgeText.IndexOf('if ($null -ne $runtimeEnvironmentHandle) { $runtimeEnvironmentHandle.Dispose() }', [StringComparison]::Ordinal)
+$runtimeRemoveIndex = $coreBridgeText.IndexOf('Remove-Item -LiteralPath $runtimeEnvironmentPath', $runtimeDisposeIndex, [StringComparison]::Ordinal)
+Assert-True ($runtimeDisposeIndex -ge 0 -and $runtimeRemoveIndex -gt $runtimeDisposeIndex) 'Core Bridge must close and delete its temporary Secret input file in finally'
+if ($env:OS -eq 'Windows_NT' -and $PSVersionTable.PSEdition -eq 'Desktop') {
+    $coreMarker = '$worktreeRoot = Split-Path -Parent $PSScriptRoot'
+    $coreMarkerIndex = $coreBridgeText.IndexOf($coreMarker, [StringComparison]::Ordinal)
+    Assert-True ($coreMarkerIndex -gt 0) 'Core Bridge script must retain a function-only loading boundary'
+    Invoke-Expression $coreBridgeText.Substring(0, $coreMarkerIndex)
+    $secretFixture = Join-Path $worktreeRoot '.haowork\cache\tmp\p0-05-core-bridge-secret-file.env'
+    New-Item -ItemType Directory -Force (Split-Path $secretFixture -Parent) | Out-Null
+    $handle = $null
+    try {
+        $handle = Write-P005V122SecretFile -Path $secretFixture -Lines @('token=test-only')
+        $acl = Get-Acl -LiteralPath $secretFixture
+        Assert-True ($acl.AreAccessRulesProtected) 'Core Bridge temporary Secret file inherited an ambient ACL'
+    } finally {
+        if ($null -ne $handle) { $handle.Dispose() }
+        Remove-Item -LiteralPath $secretFixture -Force -ErrorAction SilentlyContinue
+    }
+}
 foreach ($forbidden in @('HAOWORK_P005_CLUSTER_PUBLIC_DENIED_TARGETS', 'HAOWORK_P005_CLUSTER_INTERNAL_DENIED_TARGETS', 'HAOWORK_P005_CLUSTER_PUBLIC_PROBE_POD', 'HAOWORK_P005_CLUSTER_INTERNAL_PROBE_POD')) {
     Assert-True (-not $text.Contains($forbidden)) "cluster E2E script retains obsolete manual probe input $forbidden"
 }

@@ -120,14 +120,10 @@ jobs:
           HAOWORK_E2E_CLUSTER_NAME: ${{ inputs.cluster_name }}
         run: |
           $configPath = [Environment]::GetEnvironmentVariable('HAOWORK_AGENTTEAMS_ENV_FILE', 'Process')
-          if ([string]::IsNullOrWhiteSpace($configPath) -or -not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-            throw 'BLOCKED_RUNNER_LOCAL_ENV_FILE'
-          }
-          $configPath = [IO.Path]::GetFullPath($configPath)
-          if ([IO.Path]::GetPathRoot($configPath) -match '^[Cc]:\\') { throw 'BLOCKED_C_DRIVE_ENV_FILE' }
-
           . .\scripts\p0-05-v122-env.ps1
-          Import-P005V122LocalEnvironment -Path $configPath
+          $runnerRoot = Split-Path -Parent (Split-Path -Parent ([IO.Path]::GetFullPath($env:RUNNER_TEMP)) -ErrorAction Stop)
+          $configLines = @(Read-P005V122RunnerLocalEnvironmentFile -Path $configPath -WorkspaceRoot $env:GITHUB_WORKSPACE -RunnerRoot $runnerRoot)
+          Import-P005V122LocalEnvironment -Lines $configLines -OverrideExisting -RequireComplete
           $required = @(
             'HAOWORK_P005_PUBLIC_LLM_PROVIDER',
             'HAOWORK_P005_PUBLIC_LLM_BASE_URL',
@@ -151,6 +147,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_REAL_PREFLIGHT' }
           & .\scripts\p0-05-v122-up.ps1 -Mode LocalDualNamespace -ClusterName $clusterName
           if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_REAL_DEPLOYMENT' }
+          & .\scripts\p0-05-v122-core-bridge.ps1 -ClusterName $clusterName
+          if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_REAL_CORE_BRIDGE' }
           & .\scripts\p0-05-v122-cluster-test.ps1 -ClusterName $clusterName
           if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_REAL_ACCEPTANCE' }
       - name: Tear down owned Kind resources

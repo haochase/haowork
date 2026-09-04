@@ -210,7 +210,15 @@ function Test-P005V122ExpectedUpstreamPath {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$UpstreamRoot)
 
-  $repositoryRoot = Split-Path -Parent $PSScriptRoot
+  $worktreeRoot = Split-Path -Parent $PSScriptRoot
+  $commonGitDir = (& git -C $worktreeRoot rev-parse --git-common-dir 2>$null).Trim()
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonGitDir)) { return $false }
+  if ([IO.Path]::IsPathRooted($commonGitDir)) {
+    $resolvedCommonGitDir = [IO.Path]::GetFullPath($commonGitDir)
+  } else {
+    $resolvedCommonGitDir = [IO.Path]::GetFullPath((Join-Path $worktreeRoot $commonGitDir))
+  }
+  $repositoryRoot = Split-Path -Parent $resolvedCommonGitDir
   $expected = Join-Path $repositoryRoot '.haowork\cache\upstream\AgentTeams-v1.2.2'
   return [IO.Path]::GetFullPath($UpstreamRoot).TrimEnd('\') -ceq [IO.Path]::GetFullPath($expected).TrimEnd('\')
 }

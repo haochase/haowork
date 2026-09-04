@@ -54,9 +54,14 @@ Assert-True ($realText.Contains('environment: agentteams-e2e')) 'real E2E must u
 foreach ($label in @('self-hosted', 'windows', 'x64', 'haowork-agentteams-v122')) {
     Assert-True ($realText.Contains($label)) "real E2E runner label is missing: $label"
 }
-foreach ($command in @('p0-05-v122-preflight.ps1', 'p0-05-v122-up.ps1', 'p0-05-v122-cluster-test.ps1', 'p0-05-v122-down.ps1')) {
+foreach ($command in @('p0-05-v122-preflight.ps1', 'p0-05-v122-up.ps1', 'p0-05-v122-core-bridge.ps1', 'p0-05-v122-cluster-test.ps1', 'p0-05-v122-down.ps1')) {
     Assert-True ($realText.Contains($command)) "real E2E omits $command"
 }
+$upIndex = $realText.IndexOf('p0-05-v122-up.ps1', [StringComparison]::Ordinal)
+$coreBridgeIndex = $realText.IndexOf('p0-05-v122-core-bridge.ps1', [StringComparison]::Ordinal)
+$clusterTestIndex = $realText.IndexOf('p0-05-v122-cluster-test.ps1', [StringComparison]::Ordinal)
+Assert-True ($upIndex -ge 0 -and $coreBridgeIndex -gt $upIndex -and $clusterTestIndex -gt $coreBridgeIndex) 'real E2E must install Core Bridge after AgentTeams and before cluster acceptance'
+Assert-True ($realText.Contains('BLOCKED_REAL_CORE_BRIDGE')) 'real E2E must expose Core Bridge installation failure explicitly'
 Assert-True ($realText.Contains('if: always()')) 'real E2E cleanup must always run'
 Assert-True ($realText.Contains('-DeleteCluster')) 'real E2E cleanup must delete its owned Kind cluster'
 Assert-True ($realText.Contains('849182af8e017168a5a200a87b1062142caf462d')) 'real E2E must pin the official AgentTeams v1.2.2 commit'
@@ -65,7 +70,9 @@ Assert-True ($realText.Contains('Assert-P005V122OfficialContract')) 'real E2E mu
 Assert-True ($realText.Contains('Test-P005V122OfficialSource')) 'real E2E must validate the full upstream source before preflight'
 Assert-True ($realText.Contains('for ($attempt = 1; $attempt -le 3; $attempt++)')) 'real E2E must bound source stabilization to three attempts'
 Assert-True ($realText.Contains('HAOWORK_AGENTTEAMS_ENV_FILE')) 'real E2E must require a runner-local environment file'
+Assert-True ($realText.Contains('Read-P005V122RunnerLocalEnvironmentFile')) 'real E2E must read runner-local values from a handle whose path and ACL were validated'
 Assert-True ($realText.Contains('Import-P005V122LocalEnvironment')) 'real E2E must use the strict local environment loader'
+Assert-True ($realText.Contains('-OverrideExisting') -and $realText.Contains('-RequireComplete')) 'real E2E must replace ambient values and require all ten fields from the runner-local file'
 Assert-True ($realText.Contains('::add-mask::')) 'real E2E must mask local runtime values before invoking scripts'
 Assert-True (-not $realText.Contains('GITHUB_ENV')) 'real E2E must not persist local runtime values through GITHUB_ENV'
 Assert-True ($realText.Contains('HAOWORK_E2E_CLUSTER_NAME: ${{ inputs.cluster_name }}')) 'cluster name must enter PowerShell through a non-secret environment variable'

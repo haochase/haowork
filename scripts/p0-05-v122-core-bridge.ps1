@@ -36,6 +36,39 @@ function ConvertFrom-P005V122Base64 {
     return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
 }
 
+function Write-P005V122SecretFile {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string[]]$Lines
+    )
+
+    $stream = $null
+    try {
+        $security = New-Object System.Security.AccessControl.FileSecurity
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $security.SetOwner($currentSid)
+        $security.SetAccessRuleProtection($true, $false)
+        foreach ($sid in @($currentSid, (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')), (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
+            [void]$security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)))
+        }
+        if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop }
+        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::FullControl, [IO.FileShare]::Read, 4096, [IO.FileOptions]::None, $security)
+        $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false), 4096, $true)
+        try {
+            foreach ($line in $Lines) { $writer.WriteLine($line) }
+            $writer.Flush()
+            $stream.Flush($true)
+        } finally {
+            $writer.Dispose()
+        }
+        return $stream
+    } catch {
+        if ($null -ne $stream) { $stream.Dispose() }
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw 'BLOCKED_CORE_BRIDGE_SECRET_ACL'
+    }
+}
+
 function Invoke-P005V122HigressJSON {
     param(
         [Parameter(Mandatory)][string]$Method,
@@ -115,11 +148,7 @@ Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false'
 Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-mcp:local', $mcpContext)
 Invoke-P005V122CoreNative -FilePath $kind -Arguments @('load', 'docker-image', '--name', $ClusterName, 'haowork-core-bridge:local', 'haowork-mcp:local')
 
-$tokenPath = Join-Path $runtimeRoot 'core-bridge.token'
-if (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
-    [IO.File]::WriteAllText($tokenPath, (New-P005V122RandomHex), [Text.UTF8Encoding]::new($false))
-}
-$bridgeToken = [IO.File]::ReadAllText($tokenPath).Trim()
+$bridgeToken = New-P005V122RandomHex
 $model = [string](Get-Item -Path 'Env:HAOWORK_P005_PUBLIC_LLM_MODEL' -ErrorAction SilentlyContinue).Value
 if ([string]::IsNullOrWhiteSpace($model) -or $model.Contains("`n") -or $model.Contains("`r")) { throw 'BLOCKED_RUNTIME_MODEL' }
 $managerPod = & $kubectl get pod haowork-public-agentteams-manager -n haowork-public -o json | ConvertFrom-Json
@@ -133,11 +162,19 @@ if ($managerBuckets.Count -ne 1 -or $managerBuckets[0] -notmatch '^[a-z0-9][a-z0
 $managerMatrixToken = $managerMatrixTokens[0]
 $managerBucket = $managerBuckets[0]
 $runtimeEnvironmentPath = Join-Path $runtimeRoot 'core-bridge.env'
-[IO.File]::WriteAllLines($runtimeEnvironmentPath, @("token=$bridgeToken", "model=$model", "matrix-token=$managerMatrixToken", "bucket=$managerBucket"), [Text.UTF8Encoding]::new($false))
-$runtimeSecret = & $kubectl create secret generic haowork-core-bridge-runtime -n haowork-public --from-env-file=$runtimeEnvironmentPath --dry-run=client -o yaml
-if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET' }
-$runtimeSecret | & $kubectl apply -f - | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET' }
+$runtimeEnvironmentHandle = $null
+try {
+    $runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPath -Lines @("token=$bridgeToken", "model=$model", "matrix-token=$managerMatrixToken", "bucket=$managerBucket")
+    $runtimeSecret = & $kubectl create secret generic haowork-core-bridge-runtime -n haowork-public --from-env-file=$runtimeEnvironmentPath --dry-run=client -o yaml
+    if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET' }
+    $runtimeSecret | & $kubectl apply -f - | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET' }
+} finally {
+    if ($null -ne $runtimeEnvironmentHandle) { $runtimeEnvironmentHandle.Dispose() }
+    if (Test-Path -LiteralPath $runtimeEnvironmentPath) {
+        try { Remove-Item -LiteralPath $runtimeEnvironmentPath -Force -ErrorAction Stop } catch { throw 'BLOCKED_CORE_BRIDGE_SECRET_CLEANUP' }
+    }
+}
 
 $gatewayKeyEncoded = (& $kubectl get secret agentteams-creds-default -n haowork-public -o 'jsonpath={.data.WORKER_GATEWAY_KEY}').Trim()
 $managerPrincipal = (& $kubectl get manager default -n haowork-public -o 'jsonpath={.status.matrixUserID}').Trim()

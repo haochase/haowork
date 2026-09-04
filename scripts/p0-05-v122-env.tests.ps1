@@ -56,6 +56,20 @@ function Write-TestEnvironmentFile {
     return $path
 }
 
+function Set-TestPrivateDirectoryAcl {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $security.SetOwner($currentSid)
+    $security.SetAccessRuleProtection($true, $false)
+    $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($sid in @($currentSid, (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')), (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
+        $security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+    }
+    Set-Acl -LiteralPath $Path -AclObject $security
+}
+
 New-Item -ItemType Directory -Force $tmpRoot | Out-Null
 $env:TEMP = $tmpRoot
 $env:TMP = $tmpRoot
@@ -71,6 +85,7 @@ $created = @()
 try {
     Assert-True (Test-Path -LiteralPath $loaderPath -PathType Leaf) "environment loader is missing: $loaderPath"
     . $loaderPath
+    Assert-ThrowsLike -Action { Read-P005V122RunnerLocalEnvironmentFile -Path $null -WorkspaceRoot $worktreeRoot -RunnerRoot $repoRoot } -Pattern 'BLOCKED_RUNNER_LOCAL_ENV_FILE' -Message 'missing runner-local environment path must expose an explicit blocker'
 
     $validPath = Write-TestEnvironmentFile -Lines @(
         '# Public and Internal remain independent.',
@@ -96,6 +111,46 @@ try {
     Assert-True ($env:HAOWORK_P005_PUBLIC_LLM_MODEL -ceq 'environment-wins') 'existing process environment must override .env.local'
     Assert-True ($env:HAOWORK_P005_INTERNAL_LLM_BASE_URL -ceq 'https://internal.example.test/v1') 'internal base URL was not loaded independently'
     Assert-True ($env:HAOWORK_P005_INTERNAL_LLM_MODEL -ceq 'internal-model') 'internal model was not loaded independently'
+
+    $env:HAOWORK_P005_PUBLIC_LLM_MODEL = 'ambient-value'
+    Import-P005V122LocalEnvironment -Path $validPath -OverrideExisting -RequireComplete
+    Assert-True ($env:HAOWORK_P005_PUBLIC_LLM_MODEL -ceq 'public-model') 'strict runner import must replace an ambient process value'
+    $env:HAOWORK_P005_PUBLIC_LLM_MODEL = 'environment-wins'
+
+    $incompletePath = Write-TestEnvironmentFile -Lines @('HAOWORK_P005_PUBLIC_LLM_MODEL=only-one-field')
+    $created += $incompletePath
+    Assert-ThrowsLike -Action { Import-P005V122LocalEnvironment -Path $incompletePath -OverrideExisting -RequireComplete } -Pattern 'BLOCKED_LOCAL_ENV_MISSING_KEY' -Message 'strict runner import must reject an incomplete local file'
+    Assert-True ($env:HAOWORK_P005_PUBLIC_LLM_MODEL -ceq 'environment-wins') 'a rejected strict import must not partially mutate the process environment'
+
+    if ($env:OS -eq 'Windows_NT') {
+        $runnerRoot = Join-Path $tmpRoot ("p0-05-v122-runner-$([guid]::NewGuid().ToString('N'))")
+        $secretsRoot = Join-Path $runnerRoot 'secrets'
+        $workspaceRoot = Join-Path $runnerRoot '_work\haowork\haowork'
+        New-Item -ItemType Directory -Force $secretsRoot, $workspaceRoot | Out-Null
+        $created += $runnerRoot
+        Set-TestPrivateDirectoryAcl -Path $runnerRoot
+        Set-TestPrivateDirectoryAcl -Path $secretsRoot
+        $securePath = Join-Path $secretsRoot 'agentteams-v122.env'
+        Copy-Item -LiteralPath $validPath -Destination $securePath
+        $security = New-Object System.Security.AccessControl.FileSecurity
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $security.SetOwner($currentSid)
+        $security.SetAccessRuleProtection($true, $false)
+        foreach ($sid in @($currentSid, (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')), (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
+            $security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)))
+        }
+        Set-Acl -LiteralPath $securePath -AclObject $security
+        $secureLines = @(Read-P005V122RunnerLocalEnvironmentFile -Path $securePath -WorkspaceRoot $workspaceRoot -RunnerRoot $runnerRoot)
+        Assert-True ($secureLines.Count -ge 10) 'secure runner-local environment file was rejected or not read from its verified handle'
+        Import-P005V122LocalEnvironment -Lines $secureLines -OverrideExisting -RequireComplete
+        Assert-True ($env:HAOWORK_P005_PUBLIC_LLM_MODEL -ceq 'public-model') 'verified runner-local lines were not accepted by the strict parser'
+        $env:HAOWORK_P005_PUBLIC_LLM_MODEL = 'environment-wins'
+
+        $insecurePath = Join-Path $secretsRoot 'insecure.env'
+        Copy-Item -LiteralPath $validPath -Destination $insecurePath
+        Assert-ThrowsLike -Action { Read-P005V122RunnerLocalEnvironmentFile -Path $insecurePath -WorkspaceRoot $workspaceRoot -RunnerRoot $runnerRoot } -Pattern 'BLOCKED_RUNNER_LOCAL_ENV_ACL' -Message 'inherited runner-local environment ACL was accepted'
+        Assert-ThrowsLike -Action { Read-P005V122RunnerLocalEnvironmentFile -Path $securePath -WorkspaceRoot $runnerRoot -RunnerRoot $runnerRoot } -Pattern 'BLOCKED_RUNNER_LOCAL_ENV_WORKSPACE' -Message 'runner-local environment file inside the workspace boundary was accepted'
+    }
 
     $preflightText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'p0-05-v122-preflight.ps1') -Raw -Encoding utf8
     $upText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'p0-05-v122-up.ps1') -Raw -Encoding utf8
@@ -158,7 +213,7 @@ try {
     Write-Output 'AgentTeams v1.2.2 local environment tests passed.'
 } finally {
     foreach ($path in $created) {
-        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
     }
     foreach ($name in $allowedNames) {
         if ($null -eq $original[$name]) {
