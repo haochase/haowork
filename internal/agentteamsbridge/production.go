@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/haochase/haowork/internal/model"
 	"github.com/haochase/haowork/internal/trace"
@@ -41,6 +40,11 @@ type ProductionConfig struct {
 	MaxArtifactBytes int64
 }
 
+const (
+	productionMatrixPollLimit    = 60
+	productionMatrixPollInterval = 0
+)
+
 // NewProductionTransport creates the sole production bridge path. The
 // Kubernetes dynamic client, Matrix v3 client, S3-compatible artifact store,
 // and Higress MCP verification are all required and failures are terminal.
@@ -57,8 +61,9 @@ func NewProductionTransport(config ProductionConfig) (*Transport, error) {
 		Orchestrator: OfficialMissionOrchestrator{Control: control, Config: resources},
 		Matrix:       config.Matrix, Artifacts: config.Artifacts, MaxArtifactBytes: config.MaxArtifactBytes,
 		Mission: config.Mission, Trace: config.Trace, RuntimeBindings: config.RuntimeBindings, BindingActor: config.BindingActor,
-		EmptyMatrixPollLimit: 10, EmptyMatrixPollInterval: time.Second,
-		ExpectedEnvironmentID: strings.TrimSpace(config.EnvironmentID),
+		EmptyMatrixPollLimit: productionMatrixPollLimit, EmptyMatrixPollInterval: productionMatrixPollInterval,
+		MatrixCheckpointRequired: true,
+		ExpectedEnvironmentID:    strings.TrimSpace(config.EnvironmentID),
 		Ready: func(ctx context.Context) error {
 			_, err := config.Higress.Inspect(ctx, HigressExpectation{
 				ConsumerName: config.MCPConsumerName, RouteName: config.MCPRouteName, MCPServerName: config.MCPServerName,

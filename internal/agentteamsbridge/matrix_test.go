@@ -59,7 +59,9 @@ func TestMatrixV3LoginAndSendUseOfficialEndpoints(t *testing.T) {
 			if !ok || artifact["uri"] != "environments/public/missions/MSN-001/artifacts/abc" || artifact["sha256"] != strings.Repeat("a", 64) || artifact["environmentID"] != "public" || artifact["size"] != float64(42) {
 				t.Fatalf("send artifact evidence = %#v", artifact)
 			}
-			if body["msgtype"] != "m.text" || body["body"] != "Haowork governed mission assigned. Read the attached mission reference and reply with a concise completion summary." || body["org.haowork.mission_id"] != "MSN-001" || body["org.haowork.artifact_ref"] != "environments/public/missions/MSN-001/artifacts/abc" {
+			correlationID := agentteamsbridge.MatrixTransactionID(agentteamsbridge.MatrixOutbound{MissionID: "MSN-001", RunID: "RUN-001", WorkItemID: "WKI-001", ArtifactRef: "environments/public/missions/MSN-001/artifacts/abc"})
+			message, _ := body["body"].(string)
+			if body["msgtype"] != "m.text" || !strings.HasPrefix(message, "HAOWORK_CORRELATION_ID: "+correlationID+"\n") || !strings.Contains(message, "Repeat the correlation line exactly") || body["org.haowork.mission_id"] != "MSN-001" || body["org.haowork.artifact_ref"] != "environments/public/missions/MSN-001/artifacts/abc" {
 				t.Fatalf("send body = %#v", body)
 			}
 			_, _ = response.Write([]byte(`{"event_id":"$event-001"}`))
@@ -109,6 +111,27 @@ func TestMatrixV3LoginRejectsUnexpectedUserID(t *testing.T) {
 	}
 }
 
+func TestMatrixV3CheckpointReturnsOpaqueNextBatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/_matrix/client/v3/sync" || request.URL.Query().Get("timeout") != "0" {
+			t.Fatalf("checkpoint request = %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer human-token" {
+			t.Fatalf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		_, _ = response.Write([]byte(`{"next_batch":"opaque/baseline?1"}`))
+	}))
+	defer server.Close()
+	client, err := agentteamsbridge.NewMatrixV3Client(agentteamsbridge.MatrixV3Config{BaseURL: server.URL, AccessToken: "human-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := client.Checkpoint(context.Background())
+	if err != nil || cursor != "opaque/baseline?1" {
+		t.Fatalf("checkpoint = %q, err=%v", cursor, err)
+	}
+}
+
 func TestMatrixV3AppServiceTokenIsSingleUseAfterRejectedIdentity(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -152,7 +175,7 @@ func TestMatrixMessagesPreserveOpaquePaginationToken(t *testing.T) {
     "type":"m.room.message",
     "event_id":"$event-001",
     "sender":"@worker-build:matrix.test",
-    "content":{"msgtype":"m.text","body":"do not persist this Matrix message","org.haowork.workspace_digest":"workspace-sha","org.haowork.mission_id":"MSN-001","org.haowork.run_id":"RUN-001","org.haowork.work_item_id":"WKI-001","org.haowork.artifacts":[{"uri":"environments/public/missions/MSN-001/artifacts/abc","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environmentID":"public","size":42}]}
+    "content":{"msgtype":"m.text","body":"HAOWORK_CORRELATION_ID: haowork-0123456789abcdef0123456789abcdef\ndo not persist this Matrix message","org.haowork.workspace_digest":"workspace-sha","org.haowork.mission_id":"MSN-001","org.haowork.run_id":"RUN-001","org.haowork.work_item_id":"WKI-001","org.haowork.artifacts":[{"uri":"environments/public/missions/MSN-001/artifacts/abc","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environmentID":"public","size":42}]}
   }]
 }`))
 	}))
@@ -169,10 +192,10 @@ func TestMatrixMessagesPreserveOpaquePaginationToken(t *testing.T) {
 	if page.NextCursor != "opaque-next-token" || !page.More || len(page.Events) != 1 {
 		t.Fatalf("page = %#v", page)
 	}
-	if page.Events[0].Summary != "" || page.Events[0].SummarySHA256 == "" || page.Events[0].WorkspaceDigest != "workspace-sha" || page.Events[0].MissionID != "MSN-001" || page.Events[0].RunID != "RUN-001" || page.Events[0].WorkItemID != "WKI-001" || len(page.Events[0].Artifacts) != 1 || page.Events[0].Artifacts[0].SHA256 != strings.Repeat("a", 64) {
+	if page.Events[0].Summary != "" || page.Events[0].SummarySHA256 == "" || page.Events[0].CorrelationID != "haowork-0123456789abcdef0123456789abcdef" || page.Events[0].WorkspaceDigest != "workspace-sha" || page.Events[0].MissionID != "MSN-001" || page.Events[0].RunID != "RUN-001" || page.Events[0].WorkItemID != "WKI-001" || len(page.Events[0].Artifacts) != 1 || page.Events[0].Artifacts[0].SHA256 != strings.Repeat("a", 64) {
 		t.Fatalf("Matrix message body leaked into event = %#v", page.Events[0])
 	}
-	digest := sha256.Sum256([]byte("do not persist this Matrix message"))
+	digest := sha256.Sum256([]byte("HAOWORK_CORRELATION_ID: haowork-0123456789abcdef0123456789abcdef\ndo not persist this Matrix message"))
 	if page.Events[0].SummarySHA256 != hex.EncodeToString(digest[:]) {
 		t.Fatalf("summary digest = %q", page.Events[0].SummarySHA256)
 	}

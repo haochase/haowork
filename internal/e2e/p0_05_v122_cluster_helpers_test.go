@@ -276,7 +276,7 @@ func (fixture *p005V122ClusterFixture) requireMatrixArtifactAndMCPDataPath(topol
 		fixture.t.Fatalf("BLOCKED_MCP_TRACE_EVIDENCE: evidence=%#v", evidence)
 	}
 	fixture.evidence.record(fixture.t, "data_path", map[string]any{
-		"matrix":   map[string]any{"event_id": evidence.SourceEventIDs[0], "sender_id": topology.ManagerPrincipalID, "room_id": topology.ManagerRoomID, "mission_id": mission.ID},
+		"matrix":   map[string]any{"event_id": evidence.SourceEventIDs[0], "sender_id": topology.LeaderPrincipalID, "room_id": topology.LeaderRoomID, "mission_id": mission.ID},
 		"artifact": map[string]any{"uri": artifactURI, "sha256": artifact.SHA256, "size": artifact.Size, "environment_id": artifact.EnvironmentID, "s3_key": strings.TrimPrefix(parsedArtifact.Path, "/")},
 		"mcp":      map[string]any{"consumer_name": "manager", "route_name": "mcp-server-haowork-mcp.internal", "server_name": "haowork-mcp", "trace_id": traceID, "trace_sha256": evidence.TraceSHA256, "core_history_sha256": evidence.CoreHistorySHA256},
 	})

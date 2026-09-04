@@ -17,7 +17,7 @@ import (
 )
 
 func TestMatrixSyncResumesFromCheckpointAndDeduplicatesEventID(t *testing.T) {
-	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$one", "m.room.message", "workspace-1", "first"), validMatrixEvent("$one", "m.room.message", "workspace-1", "duplicate")}}}}
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$one", "m.room.message", testMissionWorkspaceDigest(), "first"), validMatrixEvent("$one", "m.room.message", testMissionWorkspaceDigest(), "duplicate")}}}}
 	ledgerStore := trace.New(t.TempDir())
 	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
 		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, Trace: ledgerStore, RuntimeBindings: bindingFake{}, Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil },
@@ -30,7 +30,7 @@ func TestMatrixSyncResumesFromCheckpointAndDeduplicatesEventID(t *testing.T) {
 	for event := range session.Events(context.Background(), "saved-cursor") {
 		events = append(events, event)
 	}
-	if matrix.cursor != "saved-cursor" || len(events) != 1 || events[0].Cursor != "next#000000:$one" || events[0].SourceEventID != "$one" || events[0].AdapterCursor != "next" || events[0].StepID != "STEP-001" || events[0].Summary != "first" || events[0].WorkspaceDigest != "workspace-1" {
+	if matrix.cursor != "saved-cursor" || len(events) != 1 || events[0].Cursor != "next#000000:$one" || events[0].SourceEventID != "$one" || events[0].AdapterCursor != "next" || events[0].StepID != "STEP-001" || events[0].Summary != "first" || events[0].WorkspaceDigest != testMissionWorkspaceDigest() {
 		t.Fatalf("matrix cursor/events = %q %#v", matrix.cursor, events)
 	}
 	ledger, err := ledgerStore.ReadAll(context.Background())
@@ -40,7 +40,7 @@ func TestMatrixSyncResumesFromCheckpointAndDeduplicatesEventID(t *testing.T) {
 }
 
 func TestMatrixPageUsesDistinctStableCursorsForEachEvent(t *testing.T) {
-	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "opaque", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$one", "notice", "one", ""), validMatrixEvent("$two", "notice", "two", "")}}}}
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "opaque", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$one", "notice", testMissionWorkspaceDigest(), ""), validMatrixEvent("$two", "notice", testMissionWorkspaceDigest(), "")}}}}
 	request := fullStartRequest()
 	request.StepID = "STEP-001"
 	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{}, Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }})
@@ -59,7 +59,7 @@ func TestMatrixPageUsesDistinctStableCursorsForEachEvent(t *testing.T) {
 
 func TestProductionPollWindowWaitsForNewlyDelegatedMatrixEvent(t *testing.T) {
 	mission := testMission()
-	event := validMatrixEvent("$delayed", "notice", strings.Repeat("a", 64), "delegated")
+	event := validMatrixEvent("$delayed", "notice", testMissionWorkspaceDigest(), "delegated")
 	event.MissionID = mission.ID
 	event.RunID = fullStartRequest().RunID
 	event.WorkItemID = fullStartRequest().WorkItemID
@@ -67,7 +67,7 @@ func TestProductionPollWindowWaitsForNewlyDelegatedMatrixEvent(t *testing.T) {
 	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
 		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
 		Mission:              func(string) (model.MissionEnvelope, error) { return mission, nil },
-		EmptyMatrixPollLimit: 1, EmptyMatrixPollInterval: time.Millisecond,
+		EmptyMatrixPollLimit: 2, EmptyMatrixPollInterval: time.Millisecond,
 	})
 	session, err := transport.Start(context.Background(), fullStartRequest())
 	if err != nil {
@@ -79,6 +79,74 @@ func TestProductionPollWindowWaitsForNewlyDelegatedMatrixEvent(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].SourceEventID != "$delayed" || len(matrix.cursors) != 2 {
 		t.Fatalf("events=%#v cursors=%#v", events, matrix.cursors)
+	}
+}
+
+func TestMatrixPollLimitHasNoExtraAttempt(t *testing.T) {
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{}, {}, {Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$too-late", "notice", "", "late")}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
+		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
+		Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }, EmptyMatrixPollLimit: 2,
+	})
+	session, err := transport.Start(context.Background(), fullStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Events(context.Background(), "saved") {
+		t.Fatal("event after the configured poll limit was emitted")
+	}
+	if len(matrix.cursors) != 2 {
+		t.Fatalf("Matrix poll attempts = %d, want 2", len(matrix.cursors))
+	}
+}
+
+func TestTransportStartsFirstRunAfterMatrixCheckpoint(t *testing.T) {
+	matrix := &matrixFake{checkpoint: "after-history", pages: []agentteamsbridge.MatrixPage{{NextCursor: "after-new", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$new", "notice", "", "new result")}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
+		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
+		Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }, MatrixCheckpointRequired: true,
+	})
+	session, err := transport.Start(context.Background(), fullStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := <-session.Events(context.Background(), "")
+	if matrix.checkpointCalls != 1 || len(matrix.cursors) != 1 || matrix.cursors[0] != "after-history" || event.SourceEventID != "$new" {
+		t.Fatalf("checkpoint calls=%d cursors=%#v event=%#v", matrix.checkpointCalls, matrix.cursors, event)
+	}
+}
+
+func TestTransportCheckpointOverridesStaleRunCursorForNewDelegation(t *testing.T) {
+	matrix := &matrixFake{checkpoint: "after-history", pages: []agentteamsbridge.MatrixPage{{NextCursor: "after-new", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$new", "notice", "", "new result")}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
+		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
+		Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }, MatrixCheckpointRequired: true,
+	})
+	session, err := transport.Start(context.Background(), fullStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := <-session.Events(context.Background(), "stale-run-cursor")
+	if len(matrix.cursors) != 1 || matrix.cursors[0] != "after-history" || event.SourceEventID != "$new" {
+		t.Fatalf("cursors=%#v event=%#v", matrix.cursors, event)
+	}
+}
+
+func TestProductionTransportDoesNotTrustCallerCursorForNewDelegation(t *testing.T) {
+	matrix := &matrixFake{checkpoint: "new-baseline", pages: []agentteamsbridge.MatrixPage{{NextCursor: "after-resume", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$resumed", "notice", "", "resumed result")}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
+		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
+		Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }, MatrixCheckpointRequired: true,
+	})
+	request := fullStartRequest()
+	request.Cursor = "persisted-cursor"
+	session, err := transport.Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := <-session.Events(context.Background(), "persisted-cursor")
+	if matrix.checkpointCalls != 1 || len(matrix.cursors) != 1 || matrix.cursors[0] != "new-baseline" || event.SourceEventID != "$resumed" {
+		t.Fatalf("checkpoint calls=%d cursors=%#v event=%#v", matrix.checkpointCalls, matrix.cursors, event)
 	}
 }
 
@@ -110,13 +178,18 @@ func TestMatrixEventAttributionRejectsWrongRoomAndSenderBeforeTraceOrCore(t *tes
 	}{
 		{name: "wrong room", mutate: func(event *agentteamsbridge.MatrixEvent) { event.RoomID = "!forged" }},
 		{name: "unknown sender", mutate: func(event *agentteamsbridge.MatrixEvent) { event.SenderID = "principal-forged" }},
+		{name: "manager in leader room", mutate: func(event *agentteamsbridge.MatrixEvent) {
+			event.SenderID = "principal-manager"
+			event.SenderRole = "manager"
+			event.AgentFunction = model.FunctionManager
+		}},
 		{name: "wrong role", mutate: func(event *agentteamsbridge.MatrixEvent) {
 			event.SenderRole = "build"
 			event.AgentFunction = model.FunctionBuild
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			event := validMatrixEvent("$malicious", "notice", "workspace-malicious", "forged")
+			event := validMatrixEvent("$malicious", "notice", testMissionWorkspaceDigest(), "forged")
 			test.mutate(&event)
 			ledger := trace.New(t.TempDir())
 			matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{event}}}}
@@ -176,8 +249,8 @@ func TestTransportSendsUploadedMissionAsGovernedMatrixArtifact(t *testing.T) {
 	if len(matrix.sent) != 1 {
 		t.Fatalf("Matrix send count = %d, want 1", len(matrix.sent))
 	}
-	if matrix.sentRooms[0] != "!manager" {
-		t.Fatalf("Matrix send room = %q, want observed Manager room", matrix.sentRooms[0])
+	if matrix.sentRooms[0] != "!leader" {
+		t.Fatalf("Matrix send room = %q, want observed Team Admin to Delivery Leader room", matrix.sentRooms[0])
 	}
 	document, err := json.Marshal(testMission())
 	if err != nil {
@@ -192,20 +265,90 @@ func TestTransportSendsUploadedMissionAsGovernedMatrixArtifact(t *testing.T) {
 	}
 }
 
-func TestMatrixEventWithoutWorkspaceDigestFailsClosed(t *testing.T) {
+func TestTransportIgnoresHumanOutboundMissionBeforeLeaderReply(t *testing.T) {
+	mission := testMission()
+	human := validMatrixEvent("$human", "stdout", testMissionWorkspaceDigest(), "outbound mission")
+	human.SenderID, human.SenderRole, human.AgentFunction = "principal-human", "human", ""
+	leader := validMatrixEvent("$leader", "stdout", "", "leader result")
+	for _, event := range []*agentteamsbridge.MatrixEvent{&human, &leader} {
+		event.MissionID = mission.ID
+		event.RunID = fullStartRequest().RunID
+		event.WorkItemID = fullStartRequest().WorkItemID
+	}
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{human, leader}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
+		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
+		Mission: func(string) (model.MissionEnvelope, error) { return mission, nil },
+	})
+	session, err := transport.Start(context.Background(), fullStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make([]executor.AgentTeamsEvent, 0, 1)
+	for event := range session.Events(context.Background(), "saved") {
+		events = append(events, event)
+	}
+	if len(events) != 1 || events[0].SourceEventID != "$leader" || events[0].ActorRole != string(model.FunctionDeliveryLeader) {
+		t.Fatalf("observed events = %#v", events)
+	}
+}
+
+func TestTransportIgnoresLeaderMessageWithoutCurrentCorrelation(t *testing.T) {
+	uncorrelated := validMatrixEvent("$old", "stdout", "", "delayed old result")
+	uncorrelated.CorrelationID = ""
+	current := validMatrixEvent("$current", "stdout", "", "current result")
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{uncorrelated, current}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{
+		Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{},
+		Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil },
+	})
+	session, err := transport.Start(context.Background(), fullStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make([]executor.AgentTeamsEvent, 0, 1)
+	for event := range session.Events(context.Background(), "saved") {
+		events = append(events, event)
+	}
+	if len(events) != 1 || events[0].SourceEventID != "$current" {
+		t.Fatalf("observed events = %#v", events)
+	}
+}
+
+func TestLeaderReplyWithoutGovernanceFieldsBindsToMissionSession(t *testing.T) {
 	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$missing", "notice", "", "")}}}}
 	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{}, Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }})
 	session, err := transport.Start(context.Background(), fullStartRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range session.Events(context.Background(), "saved") {
+	var events []executor.AgentTeamsEvent
+	for event := range session.Events(context.Background(), "saved") {
+		events = append(events, event)
 	}
-	failures := session.(interface {
+	document, err := json.Marshal(testMission())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].WorkspaceDigest != artifactDigest(document) {
+		t.Fatalf("session-bound leader events = %#v", events)
+	}
+}
+
+func TestLeaderReplyRejectsConflictingWorkspaceDigest(t *testing.T) {
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$wrong", "notice", strings.Repeat("f", 64), "")}}}}
+	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{}, Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }})
+	session, err := transport.Start(context.Background(), fullStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Events(context.Background(), "saved") {
+		t.Fatal("leader reply with a conflicting workspace digest reached the executor")
+	}
+	if err := <-session.(interface {
 		Errors(context.Context) <-chan error
-	}).Errors(context.Background())
-	if err := <-failures; err == nil {
-		t.Fatal("missing workspace digest was accepted")
+	}).Errors(context.Background()); err == nil {
+		t.Fatal("conflicting workspace digest did not produce a terminal error")
 	}
 }
 
@@ -218,7 +361,7 @@ func TestArtifactDownloadRejectsSHA256Mismatch(t *testing.T) {
 
 func TestMatrixArtifactIsDownloadedValidatedAndRecorded(t *testing.T) {
 	data := []byte("artifact")
-	matrixEvent := validMatrixEvent("$artifact", "notice", "workspace-artifact", "with artifact")
+	matrixEvent := validMatrixEvent("$artifact", "notice", testMissionWorkspaceDigest(), "with artifact")
 	matrixEvent.Artifacts = []agentteamsbridge.MatrixArtifact{{Kind: "report", URI: "evidence/report.json", SHA256: artifactDigest(data), EnvironmentID: "ENV-001", Size: int64(len(data))}}
 	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "next", Events: []agentteamsbridge.MatrixEvent{matrixEvent}}}}
 	ledger := trace.New(t.TempDir())
@@ -232,7 +375,7 @@ func TestMatrixArtifactIsDownloadedValidatedAndRecorded(t *testing.T) {
 		t.Fatalf("event artifacts = %#v", event.Artifacts)
 	}
 	records, err := ledger.ReadAll(context.Background())
-	if err != nil || len(records) != 2 || records[1].SummarySHA256 == "" || records[1].SenderID == "principal-manager" || !strings.HasPrefix(records[1].SenderID, "sha256:") || len(records[1].Artifacts) != 1 || records[1].Artifacts[0].Size != int64(len(data)) || records[1].Artifacts[0].EnvironmentID != "ENV-001" {
+	if err != nil || len(records) != 2 || len(records[0].Artifacts) != 1 || records[0].Artifacts[0].Kind != "mission" || records[1].LogicalActorID != "AGT-LEADER" || records[1].AgentFunction != model.FunctionDeliveryLeader || records[1].RuntimeBindingRevision != 2 || records[1].SummarySHA256 == "" || records[1].SenderID == "principal-leader" || !strings.HasPrefix(records[1].SenderID, "sha256:") || len(records[1].Artifacts) != 1 || records[1].Artifacts[0].Size != int64(len(data)) || records[1].Artifacts[0].EnvironmentID != "ENV-001" {
 		t.Fatalf("trace records = %#v, err=%v", records, err)
 	}
 }
@@ -270,7 +413,7 @@ func TestMatrixSyncFailureIsExposedToTheExecutorInsteadOfClosingNormally(t *test
 }
 
 func TestMatrixSyncPullsAllPagesAndReconcilesResponseLostPage(t *testing.T) {
-	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "one", More: true, Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$one", "notice", "workspace-one", "one")}}, {NextCursor: "two", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$two", "notice", "workspace-two", "two")}}}}
+	matrix := &matrixFake{pages: []agentteamsbridge.MatrixPage{{NextCursor: "one", More: true, Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$one", "notice", testMissionWorkspaceDigest(), "one")}}, {NextCursor: "two", Events: []agentteamsbridge.MatrixEvent{validMatrixEvent("$two", "notice", testMissionWorkspaceDigest(), "two")}}}}
 	transport := agentteamsbridge.NewTransport(agentteamsbridge.TransportConfig{Orchestrator: topologyFake{}, Matrix: matrix, Artifacts: artifactFake{}, RuntimeBindings: bindingFake{}, Mission: func(string) (model.MissionEnvelope, error) { return testMission(), nil }})
 	session, err := transport.Start(context.Background(), fullStartRequest())
 	if err != nil {
@@ -290,7 +433,19 @@ func fullStartRequest() executor.AgentTeamsStartRequest {
 }
 
 func validMatrixEvent(id, kind, workspace, summary string) agentteamsbridge.MatrixEvent {
-	return agentteamsbridge.MatrixEvent{ID: id, RoomID: "!manager", Kind: kind, Summary: summary, WorkspaceDigest: workspace, SenderID: "principal-manager", SenderRole: "manager", AgentFunction: model.FunctionManager}
+	return agentteamsbridge.MatrixEvent{ID: id, RoomID: "!leader", Kind: kind, Summary: summary, CorrelationID: testCorrelationID(), WorkspaceDigest: workspace, SenderID: "principal-leader", SenderRole: "delivery_leader", AgentFunction: model.FunctionDeliveryLeader}
+}
+
+func testCorrelationID() string {
+	return agentteamsbridge.MatrixTransactionID(agentteamsbridge.MatrixOutbound{MissionID: "MSN-001", RunID: "RUN-001", WorkItemID: "WI-1", ArtifactRef: "s3://haowork-e2e/missions/MSN-001.json"})
+}
+
+func testMissionWorkspaceDigest() string {
+	document, err := json.Marshal(testMission())
+	if err != nil {
+		panic(err)
+	}
+	return artifactDigest(document)
 }
 
 type topologyFake struct{}
@@ -342,12 +497,19 @@ func (badTopologyFake) EnsureMissionTeam(context.Context, model.MissionEnvelope)
 }
 
 type matrixFake struct {
-	cursor    string
-	cursors   []string
-	pages     []agentteamsbridge.MatrixPage
-	err       error
-	sent      []agentteamsbridge.MatrixOutbound
-	sentRooms []string
+	cursor          string
+	cursors         []string
+	pages           []agentteamsbridge.MatrixPage
+	err             error
+	sent            []agentteamsbridge.MatrixOutbound
+	sentRooms       []string
+	checkpoint      string
+	checkpointCalls int
+}
+
+func (fake *matrixFake) Checkpoint(context.Context) (string, error) {
+	fake.checkpointCalls++
+	return fake.checkpoint, nil
 }
 
 func (fake *matrixFake) Send(_ context.Context, roomID string, outbound agentteamsbridge.MatrixOutbound) error {
@@ -382,7 +544,7 @@ func artifactDigest(value []byte) string {
 
 func TestTransportDerivesMatrixRoleFromObservedTopology(t *testing.T) {
 	mission := testMission()
-	event := validMatrixEvent("$manager", "notice", strings.Repeat("a", 64), "delegated")
+	event := validMatrixEvent("$leader", "notice", testMissionWorkspaceDigest(), "delegated")
 	event.MissionID = mission.ID
 	event.RunID = fullStartRequest().RunID
 	event.WorkItemID = fullStartRequest().WorkItemID
@@ -401,7 +563,7 @@ func TestTransportDerivesMatrixRoleFromObservedTopology(t *testing.T) {
 	if !ok {
 		t.Fatal("Matrix event was not delivered")
 	}
-	if observed.ActorRole != string(model.FunctionManager) {
+	if observed.ActorRole != string(model.FunctionDeliveryLeader) {
 		t.Fatalf("derived actor role = %q", observed.ActorRole)
 	}
 }
