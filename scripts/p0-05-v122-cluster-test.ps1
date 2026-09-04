@@ -399,7 +399,7 @@ if (Test-Path -LiteralPath $clusterEvidencePath) { Remove-Item -LiteralPath $clu
 
 $env:HAOWORK_P005_CLUSTER_NAME = $ClusterName
 $env:HAOWORK_P005_CLUSTER_EVIDENCE_DIR = $evidenceRoot
-$encodedToken = (& $kubectl get secret haowork-core-bridge-runtime -n haowork-public -o 'jsonpath={.data.token}').Trim()
+$encodedToken = ([string](& $kubectl get secret haowork-core-bridge-runtime -n haowork-public -o 'jsonpath={.data.token}')).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($encodedToken)) { throw 'BLOCKED_HAOWORK_CORE_BRIDGE_TOKEN' }
 $env:HAOWORK_P005_CLUSTER_CORE_BRIDGE_TOKEN = ConvertFrom-P005V122Base64 -Value $encodedToken
 $coreBridgePort = Get-P005V122LoopbackPort

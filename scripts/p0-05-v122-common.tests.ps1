@@ -1,9 +1,16 @@
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$worktreeRoot = Split-Path -Parent $PSScriptRoot
+$commonGitDir = (& git -C $worktreeRoot rev-parse --git-common-dir).Trim()
+if ([IO.Path]::IsPathRooted($commonGitDir)) {
+  $resolvedCommonGitDir = [IO.Path]::GetFullPath($commonGitDir)
+} else {
+  $resolvedCommonGitDir = [IO.Path]::GetFullPath((Join-Path $worktreeRoot $commonGitDir))
+}
+$repoRoot = Split-Path -Parent $resolvedCommonGitDir
 $cacheRoot = Join-Path $repoRoot '.haowork\cache'
 $upstreamRoot = Join-Path $cacheRoot 'upstream\AgentTeams-v1.2.2'
-$contractPath = Join-Path $repoRoot 'deploy\agentteams\v1.2.2\upstream.lock.json'
+$contractPath = Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\upstream.lock.json'
 New-Item -ItemType Directory -Force (Join-Path $cacheRoot 'tmp') | Out-Null
 
 . (Join-Path $PSScriptRoot 'p0-05-v122-common.ps1')
@@ -18,15 +25,15 @@ if (Test-P005V122DeploymentImagesReady -Contract $contract -ManagerRuntime 'open
   throw 'the unavailable OpenHuman deployment profile was accepted'
 }
 foreach ($valuesPath in @(
-  (Join-Path $repoRoot 'deploy\agentteams\v1.2.2\public-values.yaml'),
-  (Join-Path $repoRoot 'deploy\agentteams\v1.2.2\internal-values.yaml')
+  (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\public-values.yaml'),
+  (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\internal-values.yaml')
 )) {
   if (-not (Test-P005V122ValuesDeploymentImagesReady -Contract $contract -ValuesPath $valuesPath)) {
     throw "the audited values profile was rejected: $valuesPath"
   }
 }
 $unavailableValues = Join-Path $cacheRoot 'tmp\p0-05-v122-openhuman-values.yaml'
-$publicValues = Get-Content -LiteralPath (Join-Path $repoRoot 'deploy\agentteams\v1.2.2\public-values.yaml') -Raw -Encoding utf8
+$publicValues = Get-Content -LiteralPath (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\public-values.yaml') -Raw -Encoding utf8
 ($publicValues -replace '(?m)^(\s*defaultRuntime:\s*)["'']?openclaw["'']?\s*$', '$1"openhuman"') | Set-Content -LiteralPath $unavailableValues -Encoding utf8
 try {
   if (Test-P005V122ValuesDeploymentImagesReady -Contract $contract -ValuesPath $unavailableValues) {

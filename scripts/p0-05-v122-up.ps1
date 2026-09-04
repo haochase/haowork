@@ -526,6 +526,26 @@ function Wait-P005V122BrowserEndpoint {
     return $false
 }
 
+function Remove-P005V122ManagedBrowserCacheDirectory {
+    param([Parameter(Mandatory)][string]$Path)
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if (-not (Test-Path -LiteralPath $Path)) { return }
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        } catch [System.IO.DirectoryNotFoundException] {
+            # The kubectl process can remove its cache while cleanup is traversing it.
+        } catch [System.Management.Automation.ItemNotFoundException] {
+            # Treat an already-removed managed cache as a successful cleanup.
+        } catch {
+            throw 'BLOCKED_BROWSER_CACHE_CLEANUP'
+        }
+        if (-not (Test-Path -LiteralPath $Path)) { return }
+        Start-Sleep -Milliseconds 50
+    }
+    throw 'BLOCKED_BROWSER_CACHE_CLEANUP'
+}
+
 function Stop-P005V122BrowserPortForward {
     param(
         [Parameter(Mandatory)][string]$CacheRoot,
@@ -556,7 +576,7 @@ function Stop-P005V122BrowserPortForward {
             }
         }
         if ($safeCacheDirectory -and (Test-Path -LiteralPath $cacheDirectory)) {
-            Remove-Item -LiteralPath $cacheDirectory -Recurse -Force -ErrorAction Stop
+            Remove-P005V122ManagedBrowserCacheDirectory -Path $cacheDirectory
         }
     }
     $statePath = Get-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -ClusterName $ClusterName
