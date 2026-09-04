@@ -101,9 +101,19 @@ jobs:
             git -C $upstream switch --detach v1.2.2
             if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_UPSTREAM_SOURCE' }
           }
-          $head = (& git -C $upstream rev-parse HEAD).Trim()
-          $dirty = @(& git -C $upstream status --porcelain=v1 --untracked-files=all)
-          if ($head -cne '849182af8e017168a5a200a87b1062142caf462d' -or $dirty.Count -ne 0) { throw 'BLOCKED_UPSTREAM_SOURCE' }
+          . .\scripts\p0-05-v122-common.ps1
+          $contract = Get-P005V122OfficialContract -ContractPath .\deploy\agentteams\v1.2.2\upstream.lock.json
+          Assert-P005V122OfficialContract -Contract $contract
+          if ($contract['commit'] -cne '849182af8e017168a5a200a87b1062142caf462d') { throw 'BLOCKED_UPSTREAM_CONTRACT' }
+          $sourceReady = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            if (Test-P005V122OfficialSource -Contract $contract -UpstreamRoot $upstream) {
+              $sourceReady = $true
+              break
+            }
+            if ($attempt -lt 3) { Start-Sleep -Seconds (2 * $attempt) }
+          }
+          if (-not $sourceReady) { throw 'BLOCKED_UPSTREAM_SOURCE' }
       - name: Run protected real E2E with runner-local configuration
         shell: powershell
         env:
