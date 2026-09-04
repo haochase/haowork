@@ -16,6 +16,7 @@ func TestLoadConfigRequiresCompleteProductionDependencies(t *testing.T) {
 	t.Setenv("HAOWORK_CORE_NAMESPACE", "haowork-public")
 	t.Setenv("HAOWORK_CORE_CONTROLLER_NAME", "haowork-public-agentteams-controller")
 	t.Setenv("HAOWORK_CORE_MATRIX_URL", "http://haowork-public-agentteams-tuwunel.haowork-public.svc.cluster.local:8008")
+	t.Setenv("HAOWORK_CORE_MATRIX_APPSERVICE_AS_TOKEN", "test-as-token")
 	t.Setenv("HAOWORK_CORE_S3_ENDPOINT", "haowork-public-agentteams-minio.haowork-public.svc.cluster.local:9000")
 	t.Setenv("HAOWORK_CORE_S3_ACCESS_KEY", "default")
 	t.Setenv("HAOWORK_CORE_S3_SECRET_KEY", "minio-secret")
@@ -38,7 +39,7 @@ func TestLoadConfigRequiresCompleteProductionDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.environmentID != "public" || config.namespace != "haowork-public" || config.managerImage == "" || config.s3SecretKey == "" || config.higressPassword == "" {
+	if config.environmentID != "public" || config.namespace != "haowork-public" || config.matrixAppServiceToken == "" || config.managerImage == "" || config.s3SecretKey == "" || config.higressPassword == "" {
 		t.Fatalf("config is incomplete: %#v", config.redacted())
 	}
 }
@@ -62,7 +63,7 @@ func TestDeploymentManifestUsesSecretReferencesAndLeastPrivilegeRuntime(t *testi
 	for _, required := range []string{
 		"kind: PersistentVolumeClaim", "kind: ClusterRole", "kind: ClusterRoleBinding",
 		"name: haowork-core-bridge", "type: ClusterIP", "imagePullPolicy: Never",
-		"secretKeyRef:", "haowork-core-bridge-runtime", "key: manager-image", "key: bucket", "HAOWORK_CORE_MANAGER_IMAGE", "haowork-public-agentteams-minio", "higress-console",
+		"secretKeyRef:", "haowork-core-bridge-runtime", "key: manager-image", "key: bucket", "key: matrix-appservice-as-token", "HAOWORK_CORE_MATRIX_APPSERVICE_AS_TOKEN", "HAOWORK_CORE_MANAGER_IMAGE", "haowork-public-agentteams-minio", "higress-console",
 		"runAsNonRoot: true", "readOnlyRootFilesystem: true", "automountServiceAccountToken: true",
 	} {
 		if !strings.Contains(text, required) {
@@ -91,7 +92,7 @@ func TestInternalDeploymentManifestsKeepGovernanceRuntimeIndependent(t *testing.
 		"kind: PersistentVolumeClaim", "kind: Role", "kind: RoleBinding", "namespace: haowork-internal",
 		"kind: ClusterRole", "kind: ClusterRoleBinding", "name: haowork-core-bridge-discovery",
 		"resources: [\"customresourcedefinitions\"]", "verbs: [\"get\", \"list\", \"watch\"]",
-		"name: haowork-core-bridge-runtime", "HAOWORK_CORE_ENVIRONMENT_ID", "value: internal", "HAOWORK_CORE_MANAGER_IMAGE", "key: manager-image",
+		"name: haowork-core-bridge-runtime", "HAOWORK_CORE_ENVIRONMENT_ID", "value: internal", "HAOWORK_CORE_MATRIX_APPSERVICE_AS_TOKEN", "key: matrix-appservice-as-token", "HAOWORK_CORE_MANAGER_IMAGE", "key: manager-image",
 		"haowork-internal-agentteams-tuwunel", "haowork-internal-agentteams-minio",
 		"kind: Service", "name: haowork-core-bridge",
 	} {

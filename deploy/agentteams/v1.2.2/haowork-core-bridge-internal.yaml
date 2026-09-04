@@ -155,6 +155,11 @@ spec:
               value: haowork-internal-agentteams-controller
             - name: HAOWORK_CORE_MATRIX_URL
               value: http://haowork-internal-agentteams-tuwunel.haowork-internal.svc.cluster.local:6167
+            - name: HAOWORK_CORE_MATRIX_APPSERVICE_AS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: haowork-core-bridge-runtime
+                  key: matrix-appservice-as-token
             - name: HAOWORK_CORE_S3_ENDPOINT
               value: haowork-internal-agentteams-minio.haowork-internal.svc.cluster.local:9000
             - name: HAOWORK_CORE_S3_ACCESS_KEY

@@ -67,6 +67,7 @@ type MatrixV3Config struct {
 	Username                  string
 	Password                  string
 	AccessToken               string
+	AppServiceToken           string
 	ExpectedUserID            string
 	DefaultRoomID             string
 	AllowInsecureClusterLocal bool
@@ -77,14 +78,15 @@ type MatrixV3Config struct {
 // MatrixV3Client talks only to the official Matrix Client-Server v3 API. It
 // does not retain Matrix message bodies after deriving their SHA-256 summary.
 type MatrixV3Client struct {
-	base           *url.URL
-	client         *http.Client
-	username       string
-	password       string
-	accessToken    string
-	expectedUserID string
-	defaultRoomID  string
-	maxBodyBytes   int64
+	base            *url.URL
+	client          *http.Client
+	username        string
+	password        string
+	accessToken     string
+	appServiceToken string
+	expectedUserID  string
+	defaultRoomID   string
+	maxBodyBytes    int64
 }
 
 const defaultMatrixV3MaxBodyBytes int64 = 1 << 20
@@ -107,7 +109,7 @@ func NewMatrixV3Client(config MatrixV3Config) (*MatrixV3Client, error) {
 	}
 	return &MatrixV3Client{
 		base: base, client: &copy, username: strings.TrimSpace(config.Username), password: config.Password,
-		accessToken: strings.TrimSpace(config.AccessToken), expectedUserID: strings.TrimSpace(config.ExpectedUserID), defaultRoomID: strings.TrimSpace(config.DefaultRoomID), maxBodyBytes: maxBodyBytes,
+		accessToken: strings.TrimSpace(config.AccessToken), appServiceToken: strings.TrimSpace(config.AppServiceToken), expectedUserID: strings.TrimSpace(config.ExpectedUserID), defaultRoomID: strings.TrimSpace(config.DefaultRoomID), maxBodyBytes: maxBodyBytes,
 	}, nil
 }
 
@@ -133,20 +135,33 @@ func isClusterLocalHost(host string) bool {
 	return true
 }
 
-// Login obtains a Matrix access token using the official password login flow.
+// Login obtains a user-scoped Matrix access token using either the official
+// AppService flow or the password flow used by standalone deployments.
 func (client *MatrixV3Client) Login(ctx context.Context) error {
-	if client == nil || client.base == nil || client.username == "" || client.password == "" {
+	if client == nil || client.base == nil || client.username == "" {
+		return errors.New("Matrix v3 login credentials are required")
+	}
+	loginToken := ""
+	loginBody := map[string]any{
+		"type":       "m.login.password",
+		"identifier": map[string]string{"type": "m.id.user", "user": client.username},
+		"password":   client.password,
+	}
+	if client.appServiceToken != "" {
+		loginToken = client.appServiceToken
+		client.appServiceToken = ""
+		loginBody = map[string]any{
+			"type":       "m.login.application_service",
+			"identifier": map[string]string{"type": "m.id.user", "user": client.username},
+		}
+	} else if client.password == "" {
 		return errors.New("Matrix v3 login credentials are required")
 	}
 	var response struct {
 		AccessToken string `json:"access_token"`
 		UserID      string `json:"user_id"`
 	}
-	err := client.doJSON(ctx, http.MethodPost, "/_matrix/client/v3/login", "", map[string]any{
-		"type":       "m.login.password",
-		"identifier": map[string]string{"type": "m.id.user", "user": client.username},
-		"password":   client.password,
-	}, &response)
+	err := client.doJSON(ctx, http.MethodPost, "/_matrix/client/v3/login", loginToken, loginBody, &response)
 	if err != nil {
 		return err
 	}
