@@ -354,6 +354,10 @@ function Get-P005V122SHA256 {
 
 $ClusterName = Assert-P005V122ClusterName -Name $ClusterName
 $worktreeRoot = Split-Path -Parent $PSScriptRoot
+$commonPath = Join-Path $PSScriptRoot 'p0-05-v122-common.ps1'
+. $commonPath
+$contract = Get-P005V122OfficialContract -ContractPath (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\upstream.lock.json')
+$lockedManagerImage = Get-P005V122LockedImageReference -Contract $contract -Name 'manager'
 $repoRoot = Resolve-P005V122RepoRoot -WorktreeRoot $worktreeRoot
 if (-not $repoRoot.StartsWith('E:\', [StringComparison]::OrdinalIgnoreCase)) { throw 'BLOCKED_CACHE_DRIVE' }
 $cacheRoot = Join-Path $repoRoot '.haowork\cache'
@@ -383,6 +387,9 @@ $env:HAOWORK_P005_CLUSTER_CONTROLLER_NAME = 'haowork-public-agentteams-controlle
 $env:HAOWORK_P005_CLUSTER_MODEL = $publicModel
 $env:HAOWORK_P005_CLUSTER_MANAGER_RUNTIME = 'openclaw'
 $env:HAOWORK_P005_CLUSTER_WORKER_RUNTIME = 'openclaw'
+$managerImage = ([string](& $kubectl get pod haowork-public-agentteams-manager -n haowork-public -o "jsonpath={.spec.containers[?(@.name=='worker')].image}")).Trim()
+if ($LASTEXITCODE -ne 0 -or $managerImage -cne $lockedManagerImage) { throw 'BLOCKED_CLUSTER_MANAGER_IMAGE' }
+$env:HAOWORK_P005_CLUSTER_MANAGER_IMAGE = $managerImage
 $env:HAOWORK_P005_CLUSTER_MCP_URL = 'http://aigw-local.agentteams.io:8080/mcp-servers/haowork-mcp'
 $env:HAOWORK_P005_CLUSTER_MCP_SERVER_NAME = 'haowork-mcp'
 $env:HAOWORK_P005_CLUSTER_MCP_TRANSPORT = 'http'

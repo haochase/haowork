@@ -29,6 +29,7 @@ func TestLoadConfigRequiresCompleteProductionDependencies(t *testing.T) {
 	t.Setenv("HAOWORK_CORE_MCP_ROUTE_NAME", "haowork-mcp")
 	t.Setenv("HAOWORK_CORE_MODEL", "model")
 	t.Setenv("HAOWORK_CORE_MANAGER_RUNTIME", "openclaw")
+	t.Setenv("HAOWORK_CORE_MANAGER_IMAGE", "registry.example.test/agentteams-manager:v1.2.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	t.Setenv("HAOWORK_CORE_WORKER_RUNTIME", "openclaw")
 	t.Setenv("HAOWORK_CORE_MCP_URL", "http://haowork-mcp.haowork-public.svc.cluster.local:8080/mcp")
 	t.Setenv("HAOWORK_CORE_MCP_TRANSPORT", "http")
@@ -38,7 +39,7 @@ func TestLoadConfigRequiresCompleteProductionDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.environmentID != "public" || config.namespace != "haowork-public" || config.matrixToken == "" || config.s3SecretKey == "" || config.higressPassword == "" {
+	if config.environmentID != "public" || config.namespace != "haowork-public" || config.managerImage == "" || config.matrixToken == "" || config.s3SecretKey == "" || config.higressPassword == "" {
 		t.Fatalf("config is incomplete: %#v", config.redacted())
 	}
 }
@@ -62,7 +63,7 @@ func TestDeploymentManifestUsesSecretReferencesAndLeastPrivilegeRuntime(t *testi
 	for _, required := range []string{
 		"kind: PersistentVolumeClaim", "kind: ClusterRole", "kind: ClusterRoleBinding",
 		"name: haowork-core-bridge", "type: ClusterIP", "imagePullPolicy: Never",
-		"secretKeyRef:", "haowork-core-bridge-runtime", "key: matrix-token", "key: bucket", "haowork-public-agentteams-minio", "higress-console",
+		"secretKeyRef:", "haowork-core-bridge-runtime", "key: matrix-token", "key: manager-image", "key: bucket", "HAOWORK_CORE_MANAGER_IMAGE", "haowork-public-agentteams-minio", "higress-console",
 		"runAsNonRoot: true", "readOnlyRootFilesystem: true", "automountServiceAccountToken: true",
 	} {
 		if !strings.Contains(text, required) {
@@ -91,7 +92,7 @@ func TestInternalDeploymentManifestsKeepGovernanceRuntimeIndependent(t *testing.
 		"kind: PersistentVolumeClaim", "kind: Role", "kind: RoleBinding", "namespace: haowork-internal",
 		"kind: ClusterRole", "kind: ClusterRoleBinding", "name: haowork-core-bridge-discovery",
 		"resources: [\"customresourcedefinitions\"]", "verbs: [\"get\", \"list\", \"watch\"]",
-		"name: haowork-core-bridge-runtime", "HAOWORK_CORE_ENVIRONMENT_ID", "value: internal",
+		"name: haowork-core-bridge-runtime", "HAOWORK_CORE_ENVIRONMENT_ID", "value: internal", "HAOWORK_CORE_MANAGER_IMAGE", "key: manager-image",
 		"haowork-internal-agentteams-tuwunel", "haowork-internal-agentteams-minio",
 		"kind: Service", "name: haowork-core-bridge",
 	} {

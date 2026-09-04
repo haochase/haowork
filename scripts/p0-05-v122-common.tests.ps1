@@ -17,6 +17,10 @@ New-Item -ItemType Directory -Force (Join-Path $cacheRoot 'tmp') | Out-Null
 
 $contract = Get-P005V122OfficialContract -ContractPath $contractPath
 Assert-P005V122OfficialContract -Contract $contract
+$managerImage = Get-P005V122LockedImageReference -Contract $contract -Name 'manager'
+if ($managerImage -cne 'higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-manager:v1.2.2@sha256:dd11878943e4a425ff38dcc152c9d44ea0e68d97bac89f711207134b8636c0fb') {
+  throw "locked Manager image reference is invalid: $managerImage"
+}
 
 if (-not (Test-P005V122DeploymentImagesReady -Contract $contract -ManagerRuntime 'openclaw' -WorkerRuntime 'openclaw')) {
   throw 'the resolved OpenClaw deployment profile was rejected'

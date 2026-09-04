@@ -223,6 +223,21 @@ function Test-P005V122ExpectedUpstreamPath {
   return [IO.Path]::GetFullPath($UpstreamRoot).TrimEnd('\') -ceq [IO.Path]::GetFullPath($expected).TrimEnd('\')
 }
 
+function Get-P005V122LockedImageReference {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][hashtable]$Contract,
+    [Parameter(Mandatory)][string]$Name
+  )
+
+  Assert-P005V122OfficialContract -Contract $Contract
+  $matches = @($Contract['image_resolution']['images'] | Where-Object { $_['name'] -ceq $Name })
+  if ($matches.Count -ne 1) { throw "AgentTeams locked image is unavailable: $Name" }
+  $image = $matches[0]
+  if ($image['resolution_status'] -cne 'RESOLVED' -or $image['requirement'] -cne 'ACTIVE') { throw "AgentTeams locked image is not active: $Name" }
+  return "$($image['repository']):$($image['tag'])@$($image['resolved_digest'])"
+}
+
 function Test-P005V122GitClean {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$RepositoryRoot)

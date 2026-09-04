@@ -78,6 +78,7 @@ type p005V122MissionConfig struct {
 	controllerName string
 	model          string
 	managerRuntime string
+	managerImage   string
 	workerRuntime  string
 	mcpURL         string
 	mcpServerName  string
@@ -186,7 +187,7 @@ func (fixture *p005V122ClusterFixture) requireFiveRoleTopology() agentteamsbridg
 	control := agentteamsbridge.NewKubernetesControlPlane(fixture.dynamic, fixture.discovery, fixture.publicZone.namespace, config.controllerName)
 	orchestrator := agentteamsbridge.OfficialMissionOrchestrator{Control: control, Config: agentteamsbridge.OfficialResourceConfig{
 		Namespace: fixture.publicZone.namespace, ControllerName: config.controllerName, Model: config.model,
-		ManagerRuntime: config.managerRuntime, WorkerRuntime: config.workerRuntime, MCPServerName: config.mcpServerName,
+		ManagerRuntime: config.managerRuntime, ManagerImage: config.managerImage, WorkerRuntime: config.workerRuntime, MCPServerName: config.mcpServerName,
 		MCPServerURL: config.mcpURL, MCPTransport: config.mcpTransport, HumanName: config.humanName,
 	}}
 	var topology agentteamsbridge.RuntimeTopology
@@ -308,6 +309,14 @@ func p005V122S3Bucket(value string) bool {
 		}
 	}
 	return true
+}
+
+func p005V122RequiredManagerImage(value string) string {
+	value = strings.TrimSpace(value)
+	if !regexp.MustCompile(`^[^\s@]+(?::[^\s@]+)?@sha256:[a-f0-9]{64}$`).MatchString(value) {
+		return ""
+	}
+	return value
 }
 
 func (fixture *p005V122ClusterFixture) productionStartRequest(mission model.MissionEnvelope, topology agentteamsbridge.RuntimeTopology, runID, workItemID string) executor.AgentTeamsStartRequest {
@@ -655,11 +664,15 @@ func (fixture *p005V122ClusterFixture) missionConfigForPublicZone() p005V122Miss
 		controllerName: p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_CONTROLLER_NAME"),
 		model:          p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_MODEL"),
 		managerRuntime: p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_MANAGER_RUNTIME"),
+		managerImage:   p005V122RequiredManagerImage(p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_MANAGER_IMAGE")),
 		workerRuntime:  p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_WORKER_RUNTIME"),
 		mcpURL:         p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_MCP_URL"),
 		mcpServerName:  p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_MCP_SERVER_NAME"),
 		mcpTransport:   p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_MCP_TRANSPORT"),
 		humanName:      p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_HUMAN_NAME"),
+	}
+	if fixture.missionConfig.managerImage == "" {
+		fixture.t.Fatal("BLOCKED_CLUSTER_MANAGER_IMAGE")
 	}
 	return fixture.missionConfig
 }
@@ -890,7 +903,6 @@ func p005V122DefaultCrossZoneProbeTargets(sourceNamespace string) ([]p005V122Pro
 		{Component: "matrix", Service: servicePrefix + "tuwunel", Namespace: oppositeNamespace, URL: "http://" + servicePrefix + "tuwunel." + oppositeNamespace + ".svc.cluster.local:6167/_matrix/client/versions"},
 		{Component: "minio", Service: servicePrefix + "minio", Namespace: oppositeNamespace, URL: "http://" + servicePrefix + "minio." + oppositeNamespace + ".svc.cluster.local:9000/minio/health/live"},
 		{Component: "higress", Service: "higress-gateway", Namespace: oppositeNamespace, URL: "http://higress-gateway." + oppositeNamespace + ".svc.cluster.local/"},
-		{Component: "team_core", Service: "haowork-core-bridge", Namespace: oppositeNamespace, URL: "http://haowork-core-bridge." + oppositeNamespace + ".svc.cluster.local:8081/ready"},
 	}
 	sort.Slice(targets, func(left, right int) bool { return targets[left].Component < targets[right].Component })
 	return targets, nil

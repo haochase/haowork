@@ -202,6 +202,11 @@ spec:
                   key: model
             - name: HAOWORK_CORE_MANAGER_RUNTIME
               value: openclaw
+            - name: HAOWORK_CORE_MANAGER_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  name: haowork-core-bridge-runtime
+                  key: manager-image
             - name: HAOWORK_CORE_WORKER_RUNTIME
               value: openclaw
             - name: HAOWORK_CORE_MCP_URL

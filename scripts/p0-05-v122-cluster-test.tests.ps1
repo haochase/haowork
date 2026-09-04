@@ -27,6 +27,7 @@ foreach ($required in @(
     'HAOWORK_P005_CLUSTER_MCP_GATEWAY_URL',
     'HAOWORK_P005_CLUSTER_EXECUTION_ID', 'HAOWORK_P005_CLUSTER_MISSION_ID', 'HAOWORK_P005_CLUSTER_CONTROLLER_NAME', 'HAOWORK_P005_CLUSTER_MODEL',
     'HAOWORK_P005_CLUSTER_MANAGER_RUNTIME', 'HAOWORK_P005_CLUSTER_WORKER_RUNTIME',
+    'HAOWORK_P005_CLUSTER_MANAGER_IMAGE',
     'HAOWORK_P005_CLUSTER_MCP_URL', 'HAOWORK_P005_CLUSTER_MCP_SERVER_NAME', 'HAOWORK_P005_CLUSTER_MCP_TRANSPORT', 'HAOWORK_P005_CLUSTER_HUMAN_NAME',
     'haowork-core-bridge-runtime', 'haowork-public'
 )) {
@@ -36,9 +37,14 @@ Assert-True ($text.Contains('$forwardArguments') -and $text.Contains('-ArgumentL
 Assert-True ($text.Contains('"http://127.0.0.1:$mcpGatewayPort/mcp-servers/haowork-mcp"')) 'cluster E2E must call the deployed Higress MCP route prefix'
 Assert-True ($text.Contains("-Name 'route_name' -Pattern '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.internal$'")) 'cluster evidence must validate the official Higress internal route name separately from DNS-label fields'
 Assert-True ($text.Contains('function Get-P005V122SHA256') -and -not $text.Contains('Get-FileHash')) 'cluster evidence manifest must use its own PowerShell 5.1-compatible SHA-256 implementation'
+Assert-True ($text.Contains('Get-P005V122LockedImageReference') -and $coreBridgeText.Contains('Get-P005V122LockedImageReference')) 'cluster and Core Bridge deployment must derive the Manager image from the official lock'
+Assert-True ($text.Contains("@.name=='worker'") -and $coreBridgeText.Contains("name -ceq 'worker'")) 'Manager image discovery must select the official worker-named Manager container explicitly'
 Assert-True ($text.Contains("([string](& `$kubectl get secret haowork-core-bridge-runtime")) 'missing Core Bridge Secret output must be converted before Trim so the explicit blocker is preserved'
 Assert-True (-not $coreBridgeText.Contains('core-bridge.token')) 'Core Bridge must not persist its bearer token outside Kubernetes'
 Assert-True ($coreBridgeText.Contains('Write-P005V122SecretFile')) 'Core Bridge must atomically create its temporary Secret input file with a protected ACL'
+foreach ($required in @('haowork-network-probe', 'Dockerfile.network-probe', 'haowork-network-probe-public.yaml', 'haowork-network-probe-internal.yaml')) {
+    Assert-True ($coreBridgeText.Contains($required)) "Core Bridge deployment omits network probe dependency $required"
+}
 $runtimeDisposeIndex = $coreBridgeText.IndexOf('if ($null -ne $runtimeEnvironmentHandle) { $runtimeEnvironmentHandle.Dispose() }', [StringComparison]::Ordinal)
 $runtimeRemoveIndex = $coreBridgeText.IndexOf('Remove-Item -LiteralPath $runtimeEnvironmentPath', $runtimeDisposeIndex, [StringComparison]::Ordinal)
 Assert-True ($runtimeDisposeIndex -ge 0 -and $runtimeRemoveIndex -gt $runtimeDisposeIndex) 'Core Bridge must close and delete its temporary Secret input file in finally'
@@ -63,6 +69,7 @@ if ($env:OS -eq 'Windows_NT' -and $PSVersionTable.PSEdition -eq 'Desktop') {
 foreach ($lifecycleText in @($upText, $downText)) {
     Assert-True ($lifecycleText.Contains('Wait-P005V122ManagedProcessExit')) 'browser port-forward cleanup must wait for the managed process to exit'
     Assert-True ($lifecycleText.Contains('$attempt -le 20')) 'browser cache cleanup must allow a bounded multi-second retry window'
+    Assert-True ($lifecycleText.Contains("[IO.Directory]::Delete('\\?\' + [IO.Path]::GetFullPath(`$Path)")) 'browser cache cleanup must use the Windows extended path for deep kubectl caches'
 }
 foreach ($forbidden in @('HAOWORK_P005_CLUSTER_PUBLIC_DENIED_TARGETS', 'HAOWORK_P005_CLUSTER_INTERNAL_DENIED_TARGETS', 'HAOWORK_P005_CLUSTER_PUBLIC_PROBE_POD', 'HAOWORK_P005_CLUSTER_INTERNAL_PROBE_POD')) {
     Assert-True (-not $text.Contains($forbidden)) "cluster E2E script retains obsolete manual probe input $forbidden"

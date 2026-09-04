@@ -109,6 +109,10 @@ function Invoke-P005V122HigressJSON {
 }
 
 $worktreeRoot = Split-Path -Parent $PSScriptRoot
+$commonPath = Join-Path $PSScriptRoot 'p0-05-v122-common.ps1'
+. $commonPath
+$contract = Get-P005V122OfficialContract -ContractPath (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\upstream.lock.json')
+$lockedManagerImage = Get-P005V122LockedImageReference -Contract $contract -Name 'manager'
 $commonGitDir = (& git -C $worktreeRoot rev-parse --git-common-dir).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_GIT_WORKTREE' }
 $repoRoot = Split-Path -Parent ([IO.Path]::GetFullPath($commonGitDir))
@@ -144,6 +148,7 @@ try {
     $env:CGO_ENABLED = '0'
     Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-core-bridge'), './cmd/haowork-core-bridge')
     Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-mcp'), './cmd/haowork-mcp')
+    Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-network-probe'), './cmd/haowork-network-probe')
 } finally {
     $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = $originalGOOS, $originalGOARCH, $originalCGO
 }
@@ -166,13 +171,18 @@ Copy-Item -Path (Join-Path $worktreeRoot 'skills\*') -Destination (Join-Path $mc
 
 Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-core-bridge:local', $coreContext)
 Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-mcp:local', $mcpContext)
-Invoke-P005V122CoreNative -FilePath $kind -Arguments @('load', 'docker-image', '--name', $ClusterName, 'haowork-core-bridge:local', 'haowork-mcp:local')
+$probeDockerfile = Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\Dockerfile.network-probe'
+Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-network-probe:local', '-f', $probeDockerfile, $imageRoot)
+Invoke-P005V122CoreNative -FilePath $kind -Arguments @('load', 'docker-image', '--name', $ClusterName, 'haowork-core-bridge:local', 'haowork-mcp:local', 'haowork-network-probe:local')
 
 $bridgeToken = New-P005V122RandomHex
 $model = [string](Get-Item -Path 'Env:HAOWORK_P005_PUBLIC_LLM_MODEL' -ErrorAction SilentlyContinue).Value
 if ([string]::IsNullOrWhiteSpace($model) -or $model.Contains("`n") -or $model.Contains("`r")) { throw 'BLOCKED_RUNTIME_MODEL' }
 $managerPod = & $kubectl get pod haowork-public-agentteams-manager -n haowork-public -o json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MANAGER_MATRIX_TOKEN' }
+$managerImages = @($managerPod.spec.containers | Where-Object { [string]$_.name -ceq 'worker' -and [string]$_.image -ceq $lockedManagerImage } | ForEach-Object { [string]$_.image })
+if ($managerImages.Count -ne 1) { throw 'BLOCKED_MANAGER_IMAGE' }
+$managerImage = $managerImages[0]
 $managerMatrixTokens = @($managerPod.spec.containers[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_MANAGER_MATRIX_TOKEN' } | ForEach-Object { [string]$_.value })
 $managerBuckets = @($managerPod.spec.containers[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_FS_BUCKET' } | ForEach-Object { [string]$_.value })
 if ($managerMatrixTokens.Count -ne 1 -or [string]::IsNullOrWhiteSpace($managerMatrixTokens[0]) -or $managerMatrixTokens[0].Contains("`n") -or $managerMatrixTokens[0].Contains("`r")) {
@@ -185,7 +195,7 @@ Protect-P005V122SecretDirectory -Path $runtimeRoot
 $runtimeEnvironmentPath = Join-Path $runtimeRoot 'core-bridge.env'
 $runtimeEnvironmentHandle = $null
 try {
-    $runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPath -Lines @("token=$bridgeToken", "model=$model", "matrix-token=$managerMatrixToken", "bucket=$managerBucket")
+$runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPath -Lines @("token=$bridgeToken", "model=$model", "manager-image=$managerImage", "matrix-token=$managerMatrixToken", "bucket=$managerBucket")
     $runtimeSecret = & $kubectl create secret generic haowork-core-bridge-runtime -n haowork-public --from-env-file=$runtimeEnvironmentPath --dry-run=client -o yaml
     if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET' }
     $runtimeSecret | & $kubectl apply -f - | Out-Null
@@ -216,10 +226,14 @@ if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MCP_RUNTIME_BINDING' }
 
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-n', 'haowork-public', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-core-bridge.yaml'))
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-n', 'haowork-public', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-mcp.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-network-probe-public.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-network-probe-internal.yaml'))
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'restart', 'deployment/haowork-core-bridge', '-n', 'haowork-public')
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'restart', 'deployment/haowork-mcp', '-n', 'haowork-public')
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-core-bridge', '-n', 'haowork-public', '--timeout=180s')
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-mcp', '-n', 'haowork-public', '--timeout=180s')
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-network-probe', '-n', 'haowork-public', '--timeout=180s')
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-network-probe', '-n', 'haowork-internal', '--timeout=180s')
 
 $consoleSecret = & $kubectl get secret higress-console -n haowork-public -o json
 if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_HIGRESS_CONSOLE_SECRET' }

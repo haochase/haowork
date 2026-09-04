@@ -532,7 +532,11 @@ function Remove-P005V122ManagedBrowserCacheDirectory {
     for ($attempt = 1; $attempt -le 20; $attempt++) {
         if (-not (Test-Path -LiteralPath $Path)) { return }
         try {
-            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            if ($env:OS -eq 'Windows_NT') {
+                [IO.Directory]::Delete('\\?\' + [IO.Path]::GetFullPath($Path), $true)
+            } else {
+                Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            }
         } catch [System.IO.DirectoryNotFoundException] {
             # The kubectl process can remove its cache while cleanup is traversing it.
         } catch [System.Management.Automation.ItemNotFoundException] {
