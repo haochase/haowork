@@ -67,6 +67,7 @@ type MatrixV3Config struct {
 	Username                  string
 	Password                  string
 	AccessToken               string
+	ExpectedUserID            string
 	DefaultRoomID             string
 	AllowInsecureClusterLocal bool
 	Client                    *http.Client
@@ -76,13 +77,14 @@ type MatrixV3Config struct {
 // MatrixV3Client talks only to the official Matrix Client-Server v3 API. It
 // does not retain Matrix message bodies after deriving their SHA-256 summary.
 type MatrixV3Client struct {
-	base          *url.URL
-	client        *http.Client
-	username      string
-	password      string
-	accessToken   string
-	defaultRoomID string
-	maxBodyBytes  int64
+	base           *url.URL
+	client         *http.Client
+	username       string
+	password       string
+	accessToken    string
+	expectedUserID string
+	defaultRoomID  string
+	maxBodyBytes   int64
 }
 
 const defaultMatrixV3MaxBodyBytes int64 = 1 << 20
@@ -105,7 +107,7 @@ func NewMatrixV3Client(config MatrixV3Config) (*MatrixV3Client, error) {
 	}
 	return &MatrixV3Client{
 		base: base, client: &copy, username: strings.TrimSpace(config.Username), password: config.Password,
-		accessToken: strings.TrimSpace(config.AccessToken), defaultRoomID: strings.TrimSpace(config.DefaultRoomID), maxBodyBytes: maxBodyBytes,
+		accessToken: strings.TrimSpace(config.AccessToken), expectedUserID: strings.TrimSpace(config.ExpectedUserID), defaultRoomID: strings.TrimSpace(config.DefaultRoomID), maxBodyBytes: maxBodyBytes,
 	}, nil
 }
 
@@ -150,6 +152,9 @@ func (client *MatrixV3Client) Login(ctx context.Context) error {
 	}
 	if strings.TrimSpace(response.AccessToken) == "" || strings.TrimSpace(response.UserID) == "" {
 		return errors.New("Matrix v3 login returned an incomplete identity")
+	}
+	if client.expectedUserID != "" && strings.TrimSpace(response.UserID) != client.expectedUserID {
+		return errors.New("Matrix v3 login returned an unexpected identity")
 	}
 	client.accessToken = response.AccessToken
 	return nil

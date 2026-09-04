@@ -23,9 +23,9 @@ type ResourceStatus struct {
 }
 
 type RuntimeTopology struct {
-	MissionID, TeamName, ManagerPrincipalID, LeaderPrincipalID string
-	WorkerPrincipalIDs                                         map[model.AgentFunction]string
-	HumanPrincipalID, ManagerRoomID, LeaderRoomID, TeamRoomID  string
+	MissionID, TeamName, ManagerPrincipalID, LeaderPrincipalID                     string
+	WorkerPrincipalIDs                                                             map[model.AgentFunction]string
+	HumanName, HumanUID, HumanPrincipalID, ManagerRoomID, LeaderRoomID, TeamRoomID string
 }
 
 type ControlPlane interface {

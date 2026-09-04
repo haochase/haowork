@@ -16,7 +16,6 @@ func TestLoadConfigRequiresCompleteProductionDependencies(t *testing.T) {
 	t.Setenv("HAOWORK_CORE_NAMESPACE", "haowork-public")
 	t.Setenv("HAOWORK_CORE_CONTROLLER_NAME", "haowork-public-agentteams-controller")
 	t.Setenv("HAOWORK_CORE_MATRIX_URL", "http://haowork-public-agentteams-tuwunel.haowork-public.svc.cluster.local:8008")
-	t.Setenv("HAOWORK_CORE_MATRIX_TOKEN", "matrix-token")
 	t.Setenv("HAOWORK_CORE_S3_ENDPOINT", "haowork-public-agentteams-minio.haowork-public.svc.cluster.local:9000")
 	t.Setenv("HAOWORK_CORE_S3_ACCESS_KEY", "default")
 	t.Setenv("HAOWORK_CORE_S3_SECRET_KEY", "minio-secret")
@@ -39,7 +38,7 @@ func TestLoadConfigRequiresCompleteProductionDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.environmentID != "public" || config.namespace != "haowork-public" || config.managerImage == "" || config.matrixToken == "" || config.s3SecretKey == "" || config.higressPassword == "" {
+	if config.environmentID != "public" || config.namespace != "haowork-public" || config.managerImage == "" || config.s3SecretKey == "" || config.higressPassword == "" {
 		t.Fatalf("config is incomplete: %#v", config.redacted())
 	}
 }
@@ -63,14 +62,14 @@ func TestDeploymentManifestUsesSecretReferencesAndLeastPrivilegeRuntime(t *testi
 	for _, required := range []string{
 		"kind: PersistentVolumeClaim", "kind: ClusterRole", "kind: ClusterRoleBinding",
 		"name: haowork-core-bridge", "type: ClusterIP", "imagePullPolicy: Never",
-		"secretKeyRef:", "haowork-core-bridge-runtime", "key: matrix-token", "key: manager-image", "key: bucket", "HAOWORK_CORE_MANAGER_IMAGE", "haowork-public-agentteams-minio", "higress-console",
+		"secretKeyRef:", "haowork-core-bridge-runtime", "key: manager-image", "key: bucket", "HAOWORK_CORE_MANAGER_IMAGE", "haowork-public-agentteams-minio", "higress-console",
 		"runAsNonRoot: true", "readOnlyRootFilesystem: true", "automountServiceAccountToken: true",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("deployment manifest omits %q", required)
 		}
 	}
-	for _, forbidden := range []string{"kind: Secret", "replace-with", "stringData:", "hostNetwork: true", "type: LoadBalancer", "WORKER_MATRIX_TOKEN", "agentteams-storage"} {
+	for _, forbidden := range []string{"kind: Secret", "replace-with", "stringData:", "hostNetwork: true", "type: LoadBalancer", "WORKER_MATRIX_TOKEN", "HAOWORK_CORE_MATRIX_TOKEN", "key: matrix-token", "agentteams-storage"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("deployment manifest contains forbidden %q", forbidden)
 		}
@@ -108,7 +107,7 @@ func TestInternalDeploymentManifestsKeepGovernanceRuntimeIndependent(t *testing.
 			t.Fatalf("internal MCP manifest omits %q", required)
 		}
 	}
-	for _, forbidden := range []string{"haowork-public", "kind: Secret", "hostNetwork: true", "type: LoadBalancer"} {
+	for _, forbidden := range []string{"haowork-public", "kind: Secret", "hostNetwork: true", "type: LoadBalancer", "HAOWORK_CORE_MATRIX_TOKEN", "key: matrix-token"} {
 		if strings.Contains(coreText, forbidden) || strings.Contains(mcpText, forbidden) {
 			t.Fatalf("internal manifests contain forbidden %q", forbidden)
 		}

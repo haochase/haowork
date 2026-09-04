@@ -254,6 +254,8 @@ func (control *KubernetesControlPlane) GetTopology(ctx context.Context, teamName
 			model.FunctionVerify:   principals[model.FunctionVerify],
 		},
 		HumanPrincipalID: humanPrincipal,
+		HumanName:        human.GetName(),
+		HumanUID:         string(human.GetUID()),
 		ManagerRoomID:    managerRoomID,
 		LeaderRoomID:     leaderRoomID,
 		TeamRoomID:       teamRoomID,
