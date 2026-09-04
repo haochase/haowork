@@ -61,10 +61,30 @@ function Write-P005V122SecretFile {
         } finally {
             $writer.Dispose()
         }
+        $stream.Dispose()
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
         return $stream
     } catch {
         if ($null -ne $stream) { $stream.Dispose() }
         Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw 'BLOCKED_CORE_BRIDGE_SECRET_ACL'
+    }
+}
+
+function Protect-P005V122SecretDirectory {
+    param([Parameter(Mandatory)][string]$Path)
+
+    try {
+        $security = New-Object System.Security.AccessControl.DirectorySecurity
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $security.SetOwner($currentSid)
+        $security.SetAccessRuleProtection($true, $false)
+        $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        foreach ($sid in @($currentSid, (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')), (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
+            [void]$security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+        }
+        Set-Acl -LiteralPath $Path -AclObject $security -ErrorAction Stop
+    } catch {
         throw 'BLOCKED_CORE_BRIDGE_SECRET_ACL'
     }
 }
@@ -161,6 +181,7 @@ if ($managerMatrixTokens.Count -ne 1 -or [string]::IsNullOrWhiteSpace($managerMa
 if ($managerBuckets.Count -ne 1 -or $managerBuckets[0] -notmatch '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$') { throw 'BLOCKED_MANAGER_ARTIFACT_BUCKET' }
 $managerMatrixToken = $managerMatrixTokens[0]
 $managerBucket = $managerBuckets[0]
+Protect-P005V122SecretDirectory -Path $runtimeRoot
 $runtimeEnvironmentPath = Join-Path $runtimeRoot 'core-bridge.env'
 $runtimeEnvironmentHandle = $null
 try {

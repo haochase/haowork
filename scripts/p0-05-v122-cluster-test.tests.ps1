@@ -7,6 +7,8 @@ $worktreeRoot = Split-Path -Parent $PSScriptRoot
 $scriptPath = Join-Path $PSScriptRoot 'p0-05-v122-cluster-test.ps1'
 $text = Get-Content -LiteralPath $scriptPath -Raw -Encoding utf8
 $coreBridgeText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'p0-05-v122-core-bridge.ps1') -Raw -Encoding utf8
+$upText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'p0-05-v122-up.ps1') -Raw -Encoding utf8
+$downText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'p0-05-v122-down.ps1') -Raw -Encoding utf8
 
 function Assert-True {
     param([Parameter(Mandatory)][bool]$Condition, [Parameter(Mandatory)][string]$Message)
@@ -52,10 +54,15 @@ if ($env:OS -eq 'Windows_NT' -and $PSVersionTable.PSEdition -eq 'Desktop') {
         $handle = Write-P005V122SecretFile -Path $secretFixture -Lines @('token=test-only')
         $acl = Get-Acl -LiteralPath $secretFixture
         Assert-True ($acl.AreAccessRulesProtected) 'Core Bridge temporary Secret file inherited an ambient ACL'
+        Assert-True ([IO.File]::ReadAllText($secretFixture).Contains('token=test-only')) 'Core Bridge security handle blocked the kubectl-style concurrent reader'
     } finally {
         if ($null -ne $handle) { $handle.Dispose() }
         Remove-Item -LiteralPath $secretFixture -Force -ErrorAction SilentlyContinue
     }
+}
+foreach ($lifecycleText in @($upText, $downText)) {
+    Assert-True ($lifecycleText.Contains('Wait-P005V122ManagedProcessExit')) 'browser port-forward cleanup must wait for the managed process to exit'
+    Assert-True ($lifecycleText.Contains('$attempt -le 20')) 'browser cache cleanup must allow a bounded multi-second retry window'
 }
 foreach ($forbidden in @('HAOWORK_P005_CLUSTER_PUBLIC_DENIED_TARGETS', 'HAOWORK_P005_CLUSTER_INTERNAL_DENIED_TARGETS', 'HAOWORK_P005_CLUSTER_PUBLIC_PROBE_POD', 'HAOWORK_P005_CLUSTER_INTERNAL_PROBE_POD')) {
     Assert-True (-not $text.Contains($forbidden)) "cluster E2E script retains obsolete manual probe input $forbidden"
