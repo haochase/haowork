@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/haochase/haowork/internal/eventstore"
 	"github.com/haochase/haowork/internal/model"
@@ -34,6 +35,44 @@ func TestBuildReturnExportsOnlyApprovedChangesAndClassifiesSixConflicts(t *testi
 	}
 	if len(delta.Archive) == 0 {
 		t.Fatal("return archive is empty")
+	}
+}
+
+func TestBuildReturnUsesServiceClockForArchiveLifetime(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := verifiedEntry(EntryGitDiff, "git/diff/approved.patch", []byte(`{"patch":"approved"}`))
+	request := ReturnRequest{Base: exportFixture(private).Manifest, Changes: []ApprovedChange{{Entry: entry}}, ApprovedEntryHashes: []string{EntryApprovalHash(entry)}}
+	request.Approval = ReturnApproval{ID: "APR-CLOCK", PayloadSHA256: ReturnApprovalHash(request)}
+	service := Service{ReturnSigner: NewEd25519Signer("return-key", private), ApprovalVerifier: ApprovalVerifierFunc(func(context.Context, string, string) error { return nil }), ProvenanceVerifier: ProvenanceVerifierFunc(func(context.Context, Entry) error { return nil }), Now: fixedNow}
+
+	delta, err := service.BuildReturn(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !delta.Manifest.CreatedAt.Equal(fixedNow()) || !delta.Manifest.ExpiresAt.Equal(fixedNow().Add(time.Hour)) {
+		t.Fatalf("return lifetime = %s..%s, want service clock", delta.Manifest.CreatedAt, delta.Manifest.ExpiresAt)
+	}
+}
+
+func TestBuildReturnUsesConfiguredArchiveLifetime(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := verifiedEntry(EntryGitDiff, "git/diff/approved.patch", []byte(`{"patch":"approved"}`))
+	request := ReturnRequest{Base: exportFixture(private).Manifest, Changes: []ApprovedChange{{Entry: entry}}, ApprovedEntryHashes: []string{EntryApprovalHash(entry)}}
+	request.Approval = ReturnApproval{ID: "APR-TTL", PayloadSHA256: ReturnApprovalHash(request)}
+	service := Service{ReturnSigner: NewEd25519Signer("return-key", private), ApprovalVerifier: ApprovalVerifierFunc(func(context.Context, string, string) error { return nil }), ProvenanceVerifier: ProvenanceVerifierFunc(func(context.Context, Entry) error { return nil }), Now: fixedNow, ReturnTTL: 24 * time.Hour}
+
+	delta, err := service.BuildReturn(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !delta.Manifest.ExpiresAt.Equal(fixedNow().Add(24 * time.Hour)) {
+		t.Fatalf("return expiration = %s, want configured 24h lifetime", delta.Manifest.ExpiresAt)
 	}
 }
 

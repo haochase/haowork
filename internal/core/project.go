@@ -56,6 +56,7 @@ type TransferConfig struct {
 	RuntimeBindingResolver transfer.RuntimeBindingResolver
 	ProvenanceVerifiers    transfer.ProvenanceVerifierSet
 	NewEventID             func() string
+	ReturnTTL              time.Duration
 }
 
 type Project struct {
@@ -279,6 +280,7 @@ func assembleTransfer(root string, events app.EventRepository, projectID string,
 		ApprovalVerifier:       transfer.EventStoreApprovalVerifier{Events: events},
 		ProvenanceVerifier:     provenance,
 		Now:                    writer.Now,
+		ReturnTTL:              config.ReturnTTL,
 	}, nil
 }
 

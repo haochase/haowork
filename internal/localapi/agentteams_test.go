@@ -118,3 +118,25 @@ func TestTransferReturnRequiresCoreAndReturnsOnlyCoreProducedArchive(t *testing.
 		t.Fatalf("return response=%#v returned=%t", payload, facade.returned)
 	}
 }
+
+func TestTransferReturnApprovalRequestCreatesL3HashBoundApproval(t *testing.T) {
+	server := newProjectServer(t)
+	server.Transfer = &testTransferFacade{}
+	request := transfer.ReturnRequest{
+		Base:    transfer.Manifest{TransferID: "XFR-RETURN"},
+		Changes: []transfer.ApprovedChange{{Entry: transfer.Entry{Type: transfer.EntryGitDiff, Path: "git/diff/change.json", Data: []byte(`{"patch":"approved"}`), Provenance: transfer.EntryProvenance{Source: "git", SHA256: strings.Repeat("a", 64)}}}},
+	}
+	request.ApprovedEntryHashes = []string{transfer.EntryApprovalHash(request.Changes[0].Entry)}
+	actor := model.Actor{ID: "AGT-BUILD", Kind: model.ActorAgent, Role: model.RoleAgent}
+	response := jsonRequest(t, server, http.MethodPost, "/api/v1/transfers/return-approvals", map[string]any{"request": request, "actor": actor}, authenticatedCookie(t, server))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("return approval request status=%d body=%s", response.Code, response.Body.String())
+	}
+	var approval model.ApprovalRequest
+	if err := json.NewDecoder(response.Body).Decode(&approval); err != nil {
+		t.Fatal(err)
+	}
+	if approval.SubjectType != "transfer" || approval.SubjectID != "XFR-RETURN-return" || approval.RiskLevel != "L3" || approval.PayloadSHA256 != transfer.ReturnApprovalHash(request) || approval.RequesterID != actor.ID {
+		t.Fatalf("return approval = %#v", approval)
+	}
+}

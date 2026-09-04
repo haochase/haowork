@@ -37,7 +37,14 @@ func (service Service) BuildReturn(ctx context.Context, request ReturnRequest) (
 	manifest.TransferID = request.Base.TransferID + "-return"
 	manifest.SourceEnvironmentID, manifest.TargetEnvironmentID = request.Base.TargetEnvironmentID, request.Base.SourceEnvironmentID
 	manifest.CreatedAt = time.Now().UTC()
-	manifest.ExpiresAt = manifest.CreatedAt.Add(time.Hour)
+	if service.Now != nil {
+		manifest.CreatedAt = service.Now().UTC()
+	}
+	returnTTL := service.ReturnTTL
+	if returnTTL <= 0 {
+		returnTTL = time.Hour
+	}
+	manifest.ExpiresAt = manifest.CreatedAt.Add(returnTTL)
 	archive, err := ExportBytes(ExportInput{Manifest: manifest, Entries: entries, Signer: service.ReturnSigner, ProvenanceVerifier: service.ProvenanceVerifier})
 	if err != nil {
 		return ReturnDelta{}, err

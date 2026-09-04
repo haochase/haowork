@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
 
 	"github.com/haochase/haowork/internal/localapi"
 	"github.com/haochase/haowork/internal/model"
+	"github.com/haochase/haowork/internal/transfer"
 	"github.com/spf13/cobra"
 )
 
@@ -266,7 +268,42 @@ func newApprovalsDecideCommand(deps *Dependencies) *cobra.Command {
 
 func NewTransferCommand(deps *Dependencies) *cobra.Command {
 	command := &cobra.Command{Use: "transfer", Short: "Preview and apply signed Project Capsule transfers"}
-	command.AddCommand(newTransferExportCommand(deps), newTransferReturnCommand(deps), newTransferPreviewCommand(deps), newTransferApplyCommand(deps))
+	command.AddCommand(newTransferExportCommand(deps), newTransferReturnApprovalCommand(deps), newTransferReturnCommand(deps), newTransferPreviewCommand(deps), newTransferApplyCommand(deps))
+	return command
+}
+
+func newTransferReturnApprovalCommand(deps *Dependencies) *cobra.Command {
+	var input, actorID string
+	command := &cobra.Command{Use: "request-return-approval", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		file, err := os.Open(input)
+		if err != nil {
+			return operationalError(err)
+		}
+		defer file.Close()
+		decoder := json.NewDecoder(io.LimitReader(file, 4<<20))
+		decoder.DisallowUnknownFields()
+		var request transfer.ReturnRequest
+		if err := decoder.Decode(&request); err != nil {
+			return operationalError(errors.New("invalid transfer return request"))
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			return operationalError(errors.New("invalid transfer return request"))
+		}
+		client := localAPIClient(cmd.Context(), deps.Options.Project)
+		if client == nil {
+			return &CodedError{Code: ExitOffline, Err: errors.New("local Core is required for transfer return approval")}
+		}
+		approval, err := client.RequestTransferReturnApproval(cmd.Context(), request, model.Actor{ID: actorID, Kind: model.ActorAgent, Role: model.RoleAgent})
+		if err != nil {
+			return mapError(err)
+		}
+		return writeOutput(cmd.OutOrStdout(), deps.Options.JSON, "requested transfer return approval "+approval.ID, approval)
+	}}
+	command.Flags().StringVar(&input, "input", "", "transfer return request JSON file")
+	command.Flags().StringVar(&actorID, "actor", "", "requesting logical Agent ID")
+	_ = command.MarkFlagRequired("input")
+	_ = command.MarkFlagRequired("actor")
 	return command
 }
 func newTransferExportCommand(deps *Dependencies) *cobra.Command {

@@ -18,6 +18,7 @@ import (
 	"github.com/haochase/haowork/internal/skillruntime"
 	"github.com/haochase/haowork/internal/team"
 	"github.com/haochase/haowork/internal/teamsync"
+	"github.com/haochase/haowork/internal/transfer"
 )
 
 type Client struct {
@@ -341,6 +342,11 @@ func (c *Client) BuildTransferReturn(ctx context.Context, request []byte) ([]byt
 		return nil, nil, err
 	}
 	return archive, response.Conflicts, nil
+}
+
+func (c *Client) RequestTransferReturnApproval(ctx context.Context, request transfer.ReturnRequest, actor model.Actor) (model.ApprovalRequest, error) {
+	var response model.ApprovalRequest
+	return response, c.doJSON(ctx, http.MethodPost, "/api/v1/transfers/return-approvals", transferReturnApprovalRequest{Request: request, Actor: actor}, &response)
 }
 func (c *Client) ApplyTransfer(ctx context.Context, hash string, actor model.Actor, confirmed bool) error {
 	return c.doJSON(ctx, http.MethodPost, "/api/v1/transfers/"+url.PathEscape(hash)+"/apply", transferApplyRequest{PreviewHash: hash, Actor: actor, Confirmed: confirmed}, nil)
