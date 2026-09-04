@@ -529,7 +529,7 @@ function Wait-P005V122BrowserEndpoint {
 function Remove-P005V122ManagedBrowserCacheDirectory {
     param([Parameter(Mandatory)][string]$Path)
 
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    for ($attempt = 1; $attempt -le 20; $attempt++) {
         if (-not (Test-Path -LiteralPath $Path)) { return }
         try {
             Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
@@ -538,12 +538,23 @@ function Remove-P005V122ManagedBrowserCacheDirectory {
         } catch [System.Management.Automation.ItemNotFoundException] {
             # Treat an already-removed managed cache as a successful cleanup.
         } catch {
-            throw 'BLOCKED_BROWSER_CACHE_CLEANUP'
+            # A terminating kubectl process can retain a short-lived cache handle.
         }
         if (-not (Test-Path -LiteralPath $Path)) { return }
-        Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 100
     }
     throw 'BLOCKED_BROWSER_CACHE_CLEANUP'
+}
+
+function Wait-P005V122ManagedProcessExit {
+    param([Parameter(Mandatory)][int]$ProcessId)
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return $true }
+        Start-Sleep -Milliseconds 100
+    }
+    return $null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
 }
 
 function Stop-P005V122BrowserPortForward {
@@ -574,6 +585,7 @@ function Stop-P005V122BrowserPortForward {
             } catch {
                 throw 'BLOCKED_BROWSER_PORT_FORWARD_STOP'
             }
+            if (-not (Wait-P005V122ManagedProcessExit -ProcessId $processId)) { throw 'BLOCKED_BROWSER_PORT_FORWARD_STOP' }
         }
         if ($safeCacheDirectory -and (Test-Path -LiteralPath $cacheDirectory)) {
             Remove-P005V122ManagedBrowserCacheDirectory -Path $cacheDirectory
