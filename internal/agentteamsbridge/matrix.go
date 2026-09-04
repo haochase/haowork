@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/haochase/haowork/internal/model"
 )
@@ -46,6 +48,7 @@ type MatrixEvent struct {
 	MissionID       string              `json:"missionID,omitempty"`
 	RunID           string              `json:"runID,omitempty"`
 	WorkItemID      string              `json:"workItemID,omitempty"`
+	CorrelationID   string              `json:"correlationID,omitempty"`
 	SenderID        string              `json:"senderID"`
 	SenderRole      string              `json:"senderRole"`
 	AgentFunction   model.AgentFunction `json:"agentFunction"`
@@ -90,6 +93,7 @@ type MatrixV3Client struct {
 }
 
 const defaultMatrixV3MaxBodyBytes int64 = 1 << 20
+const matrixV3SyncTimeout = time.Second
 
 func NewMatrixV3Client(config MatrixV3Config) (*MatrixV3Client, error) {
 	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(config.BaseURL), "/"))
@@ -193,6 +197,20 @@ func (client *MatrixV3Client) JoinedRooms(ctx context.Context) ([]string, error)
 	return rooms, nil
 }
 
+// Checkpoint captures an opaque sync cursor before a new delegation is sent,
+// preventing older room history from being attributed to the new run.
+func (client *MatrixV3Client) Checkpoint(ctx context.Context) (string, error) {
+	var response matrixSyncResponse
+	if err := client.doJSON(ctx, http.MethodGet, "/_matrix/client/v3/sync?timeout=0", client.token(), nil, &response); err != nil {
+		return "", err
+	}
+	cursor := strings.TrimSpace(response.NextBatch)
+	if cursor == "" {
+		return "", errors.New("Matrix v3 checkpoint returned no next_batch")
+	}
+	return cursor, nil
+}
+
 // Send puts a compact, governed reference into Matrix. The transaction ID is
 // stable for the same Mission/Run/WorkItem/Artifact tuple, and this method
 // intentionally makes exactly one write request.
@@ -209,10 +227,11 @@ func (client *MatrixV3Client) Send(ctx context.Context, roomID string, outbound 
 	}
 	body := map[string]any{
 		"msgtype":                      "m.text",
-		"body":                         "Haowork governed mission assigned. Read the attached mission reference and reply with a concise completion summary.",
+		"body":                         "HAOWORK_CORRELATION_ID: " + txnID + "\n\nHaowork governed mission assigned. Read the attached mission reference and reply with a concise completion summary. Repeat the correlation line exactly as the first line of your reply.",
 		"org.haowork.mission_id":       strings.TrimSpace(outbound.MissionID),
 		"org.haowork.run_id":           strings.TrimSpace(outbound.RunID),
 		"org.haowork.work_item_id":     strings.TrimSpace(outbound.WorkItemID),
+		"org.haowork.correlation_id":   txnID,
 		"org.haowork.workspace_digest": workspaceDigest,
 		"org.haowork.artifact_ref":     strings.TrimSpace(outbound.ArtifactRef),
 	}
@@ -292,11 +311,38 @@ func matrixTimelinePage(roomID, nextCursor string, more bool, events []matrixTim
 		}
 		page.Events = append(page.Events, MatrixEvent{
 			ID: event.EventID, RoomID: roomID, Kind: kind, SummarySHA256: hex.EncodeToString(bodyDigest[:]),
-			WorkspaceDigest: strings.TrimSpace(event.Content.WorkspaceDigest), MissionID: strings.TrimSpace(event.Content.MissionID), RunID: strings.TrimSpace(event.Content.RunID), WorkItemID: strings.TrimSpace(event.Content.WorkItemID), SenderID: event.Sender,
+			WorkspaceDigest: strings.TrimSpace(event.Content.WorkspaceDigest), MissionID: strings.TrimSpace(event.Content.MissionID), RunID: strings.TrimSpace(event.Content.RunID), WorkItemID: strings.TrimSpace(event.Content.WorkItemID), CorrelationID: matrixCorrelationID(event.Content.Body), SenderID: event.Sender,
 			Artifacts: append([]MatrixArtifact(nil), event.Content.Artifacts...),
 		})
 	}
 	return page, nil
+}
+
+func matrixCorrelationID(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "HAOWORK_CORRELATION_ID:"))
+		if line == "HAOWORK_CORRELATION_ID: "+value && isMatrixCorrelationID(value) {
+			return value
+		}
+		return ""
+	}
+	return ""
+}
+
+func isMatrixCorrelationID(value string) bool {
+	if len(value) != len("haowork-")+32 || !strings.HasPrefix(value, "haowork-") {
+		return false
+	}
+	for _, character := range value[len("haowork-"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func matrixMessageKind(msgType string) (string, bool) {
@@ -337,7 +383,7 @@ func (client *MatrixV3Client) Sync(ctx context.Context, cursor string) (MatrixPa
 	if client == nil || client.defaultRoomID == "" {
 		return MatrixPage{}, errors.New("Matrix v3 default room ID is required for Sync")
 	}
-	query := url.Values{"timeout": []string{"1000"}}
+	query := url.Values{"timeout": []string{strconv.FormatInt(int64(matrixV3SyncTimeout/time.Millisecond), 10)}}
 	if strings.TrimSpace(cursor) != "" {
 		query.Set("since", cursor)
 	}

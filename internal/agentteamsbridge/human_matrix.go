@@ -89,6 +89,13 @@ func (client *KubernetesHumanMatrixClient) Send(ctx context.Context, roomID stri
 	return client.client.Send(ctx, roomID, outbound)
 }
 
+func (client *KubernetesHumanMatrixClient) Checkpoint(ctx context.Context) (string, error) {
+	if client == nil || client.client == nil {
+		return "", errors.New("official AgentTeams Human Matrix identity is not bound")
+	}
+	return client.client.Checkpoint(ctx)
+}
+
 func (client *KubernetesHumanMatrixClient) Sync(ctx context.Context, cursor string) (MatrixPage, error) {
 	if client == nil || client.client == nil {
 		return MatrixPage{}, errors.New("official AgentTeams Human Matrix identity is not bound")

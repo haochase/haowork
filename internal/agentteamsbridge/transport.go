@@ -29,8 +29,9 @@ type TransportConfig struct {
 	// EmptyMatrixPollLimit permits a production transport to wait briefly for
 	// a newly delegated Matrix event to become visible. Zero keeps unit and
 	// migration transports single-pass.
-	EmptyMatrixPollLimit    int
-	EmptyMatrixPollInterval time.Duration
+	EmptyMatrixPollLimit     int
+	EmptyMatrixPollInterval  time.Duration
+	MatrixCheckpointRequired bool
 	// ExpectedEnvironmentID is set by the official production constructor and
 	// prevents a governed request from crossing into another security zone.
 	ExpectedEnvironmentID string
@@ -88,7 +89,8 @@ func (transport *Transport) Start(ctx context.Context, request executor.AgentTea
 		return nil, err
 	}
 	digest := sha256.Sum256(document)
-	artifactRef, err := transport.config.Artifacts.Upload(ctx, "missions/"+mission.ID+".json", document, hex.EncodeToString(digest[:]))
+	workspaceDigest := hex.EncodeToString(digest[:])
+	artifactRef, err := transport.config.Artifacts.Upload(ctx, "missions/"+mission.ID+".json", document, workspaceDigest)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +110,27 @@ func (transport *Transport) Start(ctx context.Context, request executor.AgentTea
 		}
 	}
 	if selector, ok := transport.config.Matrix.(interface{ SelectRoom(string) error }); ok {
-		if err := selector.SelectRoom(topology.ManagerRoomID); err != nil {
+		if err := selector.SelectRoom(topology.LeaderRoomID); err != nil {
 			return nil, err
+		}
+	}
+	startCursor := strings.TrimSpace(request.Cursor)
+	if transport.config.MatrixCheckpointRequired || startCursor == "" {
+		checkpoint, ok := transport.config.Matrix.(interface {
+			Checkpoint(context.Context) (string, error)
+		})
+		if !ok {
+			if transport.config.MatrixCheckpointRequired {
+				return nil, errors.New("production Matrix checkpoint is required")
+			}
+		} else {
+			startCursor, err = checkpoint.Checkpoint(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if transport.config.MatrixCheckpointRequired && startCursor == "" {
+				return nil, errors.New("production Matrix checkpoint is empty")
+			}
 		}
 	}
 	persisted, err := transport.config.RuntimeBindings.BindRuntimeTopology(ctx, topologyRuntimeBindings(topology, mission, request), transport.config.BindingActor)
@@ -120,50 +141,60 @@ func (transport *Transport) Start(ctx context.Context, request executor.AgentTea
 		return nil, errors.New("AgentTeams runtime topology bindings were not fully persisted")
 	}
 	managerBound := false
+	leaderBound := false
+	var leaderIdentity senderIdentity
 	for _, binding := range persisted {
-		if binding.LogicalActorID != request.LogicalActorID {
-			continue
+		if binding.LogicalActorID == request.LogicalActorID {
+			if binding.RuntimePrincipalID != topology.ManagerPrincipalID || binding.Revision < 1 {
+				return nil, errors.New("AgentTeams Manager runtime binding was not persisted")
+			}
+			request.RuntimePrincipalID = binding.RuntimePrincipalID
+			request.RuntimeBindingRevision = binding.Revision
+			managerBound = true
 		}
-		if binding.RuntimePrincipalID != topology.ManagerPrincipalID || binding.Revision < 1 {
-			return nil, errors.New("AgentTeams Manager runtime binding was not persisted")
+		if binding.LogicalActorID == mission.RoleAssignments[model.FunctionDeliveryLeader] {
+			if binding.RuntimePrincipalID != topology.LeaderPrincipalID || binding.Revision < 1 {
+				return nil, errors.New("AgentTeams Delivery Leader runtime binding was not persisted")
+			}
+			leaderIdentity = senderIdentity{
+				role: string(model.FunctionDeliveryLeader), function: model.FunctionDeliveryLeader,
+				logicalActorID: binding.LogicalActorID, bindingRevision: binding.Revision,
+			}
+			leaderBound = true
 		}
-		request.RuntimePrincipalID = binding.RuntimePrincipalID
-		request.RuntimeBindingRevision = binding.Revision
-		managerBound = true
-		break
 	}
 	if !managerBound {
 		return nil, errors.New("AgentTeams Manager runtime binding is missing after persistence")
 	}
-	if err := transport.config.Matrix.Send(ctx, topology.ManagerRoomID, MatrixOutbound{
-		MissionID: mission.ID, RunID: request.RunID, WorkItemID: request.WorkItemID, WorkspaceDigest: hex.EncodeToString(digest[:]), ArtifactRef: artifactRef,
-		Artifact: MatrixArtifact{
-			Kind: "mission", URI: artifactRef, SHA256: hex.EncodeToString(digest[:]), EnvironmentID: mission.EnvironmentID, Size: int64(len(document)),
-		},
-	}); err != nil {
+	if !leaderBound {
+		return nil, errors.New("AgentTeams Delivery Leader runtime binding is missing after persistence")
+	}
+	missionArtifact := MatrixArtifact{
+		Kind: "mission", URI: artifactRef, SHA256: workspaceDigest, EnvironmentID: mission.EnvironmentID, Size: int64(len(document)),
+	}
+	outbound := MatrixOutbound{
+		MissionID: mission.ID, RunID: request.RunID, WorkItemID: request.WorkItemID, WorkspaceDigest: workspaceDigest, ArtifactRef: artifactRef,
+		Artifact: missionArtifact,
+	}
+	if err := transport.config.Matrix.Send(ctx, topology.LeaderRoomID, outbound); err != nil {
 		return nil, err
 	}
-	session := &session{transport: transport, request: request, missionID: mission.ID, roomID: topology.ManagerRoomID, allowedSenders: topologySenders(topology), errors: make(chan error, 1)}
-	if err := session.appendTrace(ctx, "bridge.delegated", request.RunID+":"+request.WorkItemID+":bridge.delegated", "delegated", "", "", "", nil, nil); err != nil {
+	session := &session{
+		transport: transport, request: request, missionID: mission.ID, roomID: topology.LeaderRoomID, workspaceDigest: workspaceDigest, correlationID: MatrixTransactionID(outbound), startCursor: startCursor,
+		humanPrincipalID: topology.HumanPrincipalID, leaderPrincipalID: topology.LeaderPrincipalID, leaderIdentity: leaderIdentity,
+		errors: make(chan error, 1),
+	}
+	if err := session.appendTrace(ctx, "bridge.delegated", request.RunID+":"+request.WorkItemID+":bridge.delegated", "delegated", "", "", "", []model.ArtifactRef{{Kind: missionArtifact.Kind, URI: missionArtifact.URI, SHA256: missionArtifact.SHA256}}, []MatrixArtifact{missionArtifact}, nil); err != nil {
 		return nil, err
 	}
 	return session, nil
 }
 
 type senderIdentity struct {
-	role     string
-	function model.AgentFunction
-}
-
-func topologySenders(topology RuntimeTopology) map[string]senderIdentity {
-	return map[string]senderIdentity{
-		topology.ManagerPrincipalID:                         {role: string(model.FunctionManager), function: model.FunctionManager},
-		topology.LeaderPrincipalID:                          {role: string(model.FunctionDeliveryLeader), function: model.FunctionDeliveryLeader},
-		topology.WorkerPrincipalIDs[model.FunctionResearch]: {role: string(model.FunctionResearch), function: model.FunctionResearch},
-		topology.WorkerPrincipalIDs[model.FunctionBuild]:    {role: string(model.FunctionBuild), function: model.FunctionBuild},
-		topology.WorkerPrincipalIDs[model.FunctionVerify]:   {role: string(model.FunctionVerify), function: model.FunctionVerify},
-		topology.HumanPrincipalID:                           {role: "human"},
-	}
+	role            string
+	function        model.AgentFunction
+	logicalActorID  string
+	bindingRevision int
 }
 
 func topologyRuntimeBindings(topology RuntimeTopology, mission model.MissionEnvelope, request executor.AgentTeamsStartRequest) []model.RuntimeBinding {
@@ -208,14 +239,19 @@ func validateTopology(topology RuntimeTopology, request executor.AgentTeamsStart
 }
 
 type session struct {
-	transport      *Transport
-	request        executor.AgentTeamsStartRequest
-	missionID      string
-	roomID         string
-	allowedSenders map[string]senderIdentity
-	errors         chan error
-	once           sync.Once
-	cancelErr      error
+	transport         *Transport
+	request           executor.AgentTeamsStartRequest
+	missionID         string
+	roomID            string
+	workspaceDigest   string
+	correlationID     string
+	startCursor       string
+	humanPrincipalID  string
+	leaderPrincipalID string
+	leaderIdentity    senderIdentity
+	errors            chan error
+	once              sync.Once
+	cancelErr         error
 }
 
 // BoundRequest returns the request after the observed topology supplied its
@@ -231,6 +267,9 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 	output := make(chan executor.AgentTeamsEvent)
 	go func() {
 		defer close(output)
+		if session.startCursor != "" {
+			cursor = session.startCursor
+		}
 		seen := make(map[string]struct{})
 		emptyPolls := 0
 		for {
@@ -245,18 +284,28 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 					session.recordError(errors.New("Matrix event id is required"))
 					return
 				}
-				if event.MissionID != "" && (event.MissionID != session.missionID || event.RunID != session.request.RunID || event.WorkItemID != session.request.WorkItemID) {
+				hasCorrelation := event.MissionID != "" || event.RunID != "" || event.WorkItemID != ""
+				if hasCorrelation && (event.MissionID != session.missionID || event.RunID != session.request.RunID || event.WorkItemID != session.request.WorkItemID) {
 					continue
 				}
-				if err := session.bindAndValidateMatrixEvent(&event); err != nil {
+				identity, ignore, err := session.bindAndValidateMatrixEvent(&event)
+				if err != nil {
 					session.recordError(err)
 					return
+				}
+				if ignore {
+					continue
+				}
+				if event.CorrelationID != session.correlationID {
+					continue
 				}
 				if _, ok := seen[event.ID]; ok {
 					continue
 				}
 				if event.WorkspaceDigest == "" {
-					session.recordError(errors.New("Matrix event workspace digest is required"))
+					event.WorkspaceDigest = session.workspaceDigest
+				} else if event.WorkspaceDigest != session.workspaceDigest {
+					session.recordError(errors.New("Matrix event workspace digest conflicts with the delegated mission"))
 					return
 				}
 				seen[event.ID] = struct{}{}
@@ -265,7 +314,7 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 					session.recordError(err)
 					return
 				}
-				if err := session.appendTrace(ctx, event.Kind, event.ID, "observed", page.NextCursor, event.Summary, event.SenderID, artifacts, event.Artifacts); err != nil {
+				if err := session.appendTrace(ctx, event.Kind, event.ID, "observed", page.NextCursor, event.Summary, event.SenderID, artifacts, event.Artifacts, &identity); err != nil {
 					session.errors <- err
 					return
 				}
@@ -277,21 +326,20 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 				}
 			}
 			if !page.More {
+				emptyPolls++
 				if emitted || session.transport.config.EmptyMatrixPollLimit <= 0 || emptyPolls >= session.transport.config.EmptyMatrixPollLimit {
 					return
 				}
-				emptyPolls++
 				if page.NextCursor != "" && page.NextCursor != cursor {
 					cursor = page.NextCursor
 				}
 				interval := session.transport.config.EmptyMatrixPollInterval
-				if interval <= 0 {
-					interval = time.Second
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(interval):
+				if interval > 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(interval):
+					}
 				}
 				continue
 			}
@@ -305,18 +353,21 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 	return output
 }
 
-func (session *session) bindAndValidateMatrixEvent(event *MatrixEvent) error {
+func (session *session) bindAndValidateMatrixEvent(event *MatrixEvent) (senderIdentity, bool, error) {
 	if event == nil {
-		return errors.New("Matrix event is required")
+		return senderIdentity{}, false, errors.New("Matrix event is required")
 	}
 	if strings.TrimSpace(event.RoomID) == "" || event.RoomID != session.roomID {
-		return errors.New("Matrix event room does not match the delegated leader room")
+		return senderIdentity{}, false, errors.New("Matrix event room does not match the delegated leader room")
 	}
 	senderID := strings.TrimSpace(event.SenderID)
-	expected, exists := session.allowedSenders[senderID]
-	if !exists || senderID == "" {
-		return errors.New("Matrix event sender is not in the delegated topology")
+	if senderID != "" && senderID == session.humanPrincipalID {
+		return senderIdentity{}, true, nil
 	}
+	if senderID == "" || senderID != session.leaderPrincipalID {
+		return senderIdentity{}, false, errors.New("Matrix event sender is not the delegated Delivery Leader")
+	}
+	expected := session.leaderIdentity
 	if strings.TrimSpace(event.SenderRole) == "" {
 		event.SenderRole = expected.role
 	}
@@ -324,12 +375,12 @@ func (session *session) bindAndValidateMatrixEvent(event *MatrixEvent) error {
 		event.AgentFunction = expected.function
 	}
 	if !strings.EqualFold(strings.TrimSpace(event.SenderRole), expected.role) {
-		return errors.New("Matrix event sender role does not match the delegated topology")
+		return senderIdentity{}, false, errors.New("Matrix event sender role does not match the delegated topology")
 	}
 	if event.AgentFunction != expected.function {
-		return errors.New("Matrix event agent function does not match the delegated topology")
+		return senderIdentity{}, false, errors.New("Matrix event agent function does not match the delegated topology")
 	}
-	return nil
+	return expected, false, nil
 }
 
 func matrixEventCursor(pageCursor string, index int, eventID string) string {
@@ -348,14 +399,18 @@ func (session *session) recordError(err error) {
 	}
 }
 
-func (session *session) appendTrace(ctx context.Context, eventType, sourceID, status, cursor, summary, senderID string, artifacts []model.ArtifactRef, matrixArtifacts []MatrixArtifact) error {
+func (session *session) appendTrace(ctx context.Context, eventType, sourceID, status, cursor, summary, senderID string, artifacts []model.ArtifactRef, matrixArtifacts []MatrixArtifact, observed *senderIdentity) error {
 	if session.transport.config.Trace == nil {
 		return nil
 	}
+	logicalActorID, bindingRevision, function := session.request.LogicalActorID, session.request.RuntimeBindingRevision, session.request.AgentFunction
+	if observed != nil {
+		logicalActorID, bindingRevision, function = observed.logicalActorID, observed.bindingRevision, observed.function
+	}
 	record := trace.Envelope{
 		ID: session.request.RunID + ":" + sourceID, MissionID: session.request.MissionID, GovernanceTaskID: session.request.TaskID,
-		WorkItemID: session.request.WorkItemID, RunID: session.request.RunID, LogicalActorID: session.request.LogicalActorID,
-		RuntimeBindingRevision: session.request.RuntimeBindingRevision, AgentFunction: session.request.AgentFunction, EnvironmentID: session.request.EnvironmentID,
+		WorkItemID: session.request.WorkItemID, RunID: session.request.RunID, LogicalActorID: logicalActorID,
+		RuntimeBindingRevision: bindingRevision, AgentFunction: function, EnvironmentID: session.request.EnvironmentID,
 		AgentTeamsInstanceID: session.request.AgentTeamsInstanceID, RoomID: session.roomID, SenderID: stableSenderID(senderID), SourceEventID: sourceID, SourceEventType: eventType,
 		SourceSystem: "matrix", Cursor: cursor, ArtifactRefs: artifacts, Status: status, StartedAt: time.Unix(1, 0).UTC(), FinishedAt: time.Unix(1, 0).UTC(),
 	}
