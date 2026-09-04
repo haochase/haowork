@@ -57,3 +57,33 @@ powershell.exe -NoProfile -File .\scripts\p0-05-v122-down.ps1
 
 脚本会在工具、镜像摘要、运行时凭据、网络白名单、浏览器入口或受认证 Core Bridge
 缺失时失败关闭，不会用模拟状态生成真实部署证据。
+
+## GitHub Actions 分层验证
+
+`.github/workflows/agentteams-v122.yml` 提供两层互不混淆的验证：
+
+- 普通 Pull Request、`main` 推送和手动运行都会执行无凭据合同测试。Ubuntu 验证
+  workflow 结构，Windows 额外验证上游锁、配置加载、脚本合同、网络证明和离线收据协议。
+- 真实 Kind 双命名空间 E2E 只在手动运行时显式选择 `run_real_e2e=true` 后进入
+  `agentteams-e2e` GitHub Environment，并等待该 Environment 的人工审批。
+
+真实 E2E 使用标签为 `self-hosted`、`windows`、`x64`、`haowork-agentteams-v122` 的
+受控 runner。runner 工作区必须位于非 C 盘，并预装 Docker、Kind、Helm、kubectl、Git、
+Go、Node、npm 和 PowerShell 7。以下十项值配置为 `agentteams-e2e` Environment Secrets：
+
+```text
+HAOWORK_P005_PUBLIC_LLM_PROVIDER
+HAOWORK_P005_PUBLIC_LLM_BASE_URL
+HAOWORK_P005_PUBLIC_LLM_API_KEY
+HAOWORK_P005_PUBLIC_LLM_MODEL
+HAOWORK_P005_PUBLIC_EGRESS_CIDRS
+HAOWORK_P005_INTERNAL_LLM_PROVIDER
+HAOWORK_P005_INTERNAL_LLM_BASE_URL
+HAOWORK_P005_INTERNAL_LLM_API_KEY
+HAOWORK_P005_INTERNAL_LLM_MODEL
+HAOWORK_P005_INTERNAL_EGRESS_CIDRS
+```
+
+workflow 权限只有 `contents: read`，不上传原始 Artifact，也不执行 Commit、Push、PR 或
+自动合并。没有手动触发真实 job 时，真实 AgentTeams E2E 状态必须记为 `NOT_RUN`；自动
+合同测试通过不能替代真实集群验收或物理双区验收。

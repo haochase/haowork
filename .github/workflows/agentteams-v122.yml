@@ -1,0 +1,132 @@
+name: AgentTeams v1.2.2 contracts and real E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_real_e2e:
+        description: Run the protected real Kind dual-namespace acceptance
+        required: true
+        type: boolean
+        default: false
+      cluster_name:
+        description: Dedicated Kind cluster name owned by this run
+        required: true
+        type: string
+        default: haowork-p005-v122-ci
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate public workflow contract
+        shell: pwsh
+        run: ./scripts/p0-05-v122-workflow.tests.ps1
+      - name: Validate Windows PowerShell compatibility
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\scripts\p0-05-v122-workflow.tests.ps1
+      - name: Prepare pinned AgentTeams source for Windows contracts
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $upstream = Join-Path $env:GITHUB_WORKSPACE '.haowork\cache\upstream\AgentTeams-v1.2.2'
+          New-Item -ItemType Directory -Force (Split-Path $upstream -Parent) | Out-Null
+          git clone --filter=blob:none --depth 1 --branch v1.2.2 https://github.com/agentscope-ai/AgentTeams.git $upstream
+          if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_UPSTREAM_CLONE' }
+          $head = (& git -C $upstream rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne '849182af8e017168a5a200a87b1062142caf462d') { throw 'BLOCKED_UPSTREAM_SOURCE' }
+      - name: Validate Windows AgentTeams contracts
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tests = @(
+            'p0-05-v122-common.tests.ps1',
+            'p0-05-v122-env.tests.ps1',
+            'p0-05-v122-cluster-test.tests.ps1',
+            'p0-05-v122-higress.tests.ps1',
+            'p0-05-v122-network.tests.ps1',
+            'p0-05-v122-process.tests.ps1',
+            'p0-05-v122-provider.tests.ps1',
+            'p0-05-v122-offline.tests.ps1'
+          )
+          foreach ($test in $tests) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path 'scripts' $test)
+            if ($LASTEXITCODE -ne 0) { throw "BLOCKED_AGENTTEAMS_CONTRACT:$test" }
+          }
+
+  real-agentteams-e2e:
+    name: protected real dual-namespace E2E
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_real_e2e }}
+    environment: agentteams-e2e
+    runs-on: [self-hosted, windows, x64, haowork-agentteams-v122]
+    timeout-minutes: 45
+    concurrency:
+      group: agentteams-v122-real-e2e
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate self-hosted runner boundary
+        shell: powershell
+        run: |
+          if ([IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE) -match '^[Cc]:\\') { throw 'BLOCKED_C_DRIVE_WORKSPACE' }
+          foreach ($tool in @('docker', 'kind', 'helm', 'kubectl', 'git', 'go', 'npm', 'pwsh')) {
+            if ($null -eq (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "BLOCKED_$($tool.ToUpperInvariant())" }
+          }
+      - name: Prepare pinned AgentTeams v1.2.2 source
+        shell: powershell
+        run: |
+          $upstream = Join-Path $env:GITHUB_WORKSPACE '.haowork\cache\upstream\AgentTeams-v1.2.2'
+          New-Item -ItemType Directory -Force (Split-Path $upstream -Parent) | Out-Null
+          if (-not (Test-Path -LiteralPath $upstream -PathType Container)) {
+            git clone --filter=blob:none --depth 1 --branch v1.2.2 https://github.com/agentscope-ai/AgentTeams.git $upstream
+            if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_UPSTREAM_CLONE' }
+          } else {
+            $remote = (& git -C $upstream remote get-url origin).Trim()
+            if ($LASTEXITCODE -ne 0 -or $remote -cne 'https://github.com/agentscope-ai/AgentTeams.git') { throw 'BLOCKED_UPSTREAM_SOURCE' }
+            git -C $upstream fetch --force --depth 1 origin refs/tags/v1.2.2:refs/tags/v1.2.2
+            if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_UPSTREAM_FETCH' }
+            git -C $upstream switch --detach v1.2.2
+            if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_UPSTREAM_SOURCE' }
+          }
+          $head = (& git -C $upstream rev-parse HEAD).Trim()
+          $dirty = @(& git -C $upstream status --porcelain=v1 --untracked-files=all)
+          if ($head -cne '849182af8e017168a5a200a87b1062142caf462d' -or $dirty.Count -ne 0) { throw 'BLOCKED_UPSTREAM_SOURCE' }
+      - name: Preflight real environment
+        shell: powershell
+        env: &agentteams-runtime
+          HAOWORK_P005_PUBLIC_LLM_PROVIDER: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_PROVIDER }}
+          HAOWORK_P005_PUBLIC_LLM_BASE_URL: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_BASE_URL }}
+          HAOWORK_P005_PUBLIC_LLM_API_KEY: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_API_KEY }}
+          HAOWORK_P005_PUBLIC_LLM_MODEL: ${{ secrets.HAOWORK_P005_PUBLIC_LLM_MODEL }}
+          HAOWORK_P005_PUBLIC_EGRESS_CIDRS: ${{ secrets.HAOWORK_P005_PUBLIC_EGRESS_CIDRS }}
+          HAOWORK_P005_INTERNAL_LLM_PROVIDER: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_PROVIDER }}
+          HAOWORK_P005_INTERNAL_LLM_BASE_URL: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_BASE_URL }}
+          HAOWORK_P005_INTERNAL_LLM_API_KEY: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_API_KEY }}
+          HAOWORK_P005_INTERNAL_LLM_MODEL: ${{ secrets.HAOWORK_P005_INTERNAL_LLM_MODEL }}
+          HAOWORK_P005_INTERNAL_EGRESS_CIDRS: ${{ secrets.HAOWORK_P005_INTERNAL_EGRESS_CIDRS }}
+        run: .\scripts\p0-05-v122-preflight.ps1 -Mode LocalDualNamespace -ClusterName '${{ inputs.cluster_name }}' -Json
+      - name: Deploy isolated AgentTeams releases
+        shell: powershell
+        env: *agentteams-runtime
+        run: .\scripts\p0-05-v122-up.ps1 -Mode LocalDualNamespace -ClusterName '${{ inputs.cluster_name }}'
+      - name: Run real AgentTeams acceptance
+        shell: powershell
+        env: *agentteams-runtime
+        run: .\scripts\p0-05-v122-cluster-test.ps1 -ClusterName '${{ inputs.cluster_name }}'
+      - name: Tear down owned Kind resources
+        if: always()
+        shell: powershell
+        run: .\scripts\p0-05-v122-down.ps1 -ClusterName '${{ inputs.cluster_name }}' -DeleteCluster
