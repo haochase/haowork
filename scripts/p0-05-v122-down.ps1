@@ -508,6 +508,15 @@ Invoke-P005V122WithDeploymentLock -ClusterName $ClusterName -Action {
     # state cannot interrupt a user-owned cluster that reused this name.
     Stop-P005V122BrowserPortForward -CacheRoot $cacheRoot -ClusterName $ClusterName
 
+    if ($DeleteCluster) {
+        if ($ownership.cluster_created_by_haowork -isnot [bool] -or $ownership.cluster_created_by_haowork -ne $true) { throw 'BLOCKED_CLUSTER_OWNERSHIP' }
+        & $kind delete cluster --name $ClusterName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_KIND_DELETE' }
+        Remove-P005V122DeploymentOwnership -CacheRoot $cacheRoot -ClusterName $ClusterName
+        Write-Output 'PASS P0-05 v1.2.2 owned Kind cluster was removed directly; evidence and Docker Desktop data were preserved.'
+        return
+    }
+
     foreach ($zone in $zones) {
         & $helm uninstall $zone.Release --namespace $zone.Namespace --ignore-not-found --wait --timeout 5m | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "BLOCKED_HELM_UNINSTALL_$($zone.Name.ToUpperInvariant())" }
@@ -517,15 +526,6 @@ Invoke-P005V122WithDeploymentLock -ClusterName $ClusterName -Action {
         if ($LASTEXITCODE -ne 0) { throw "BLOCKED_NAMESPACE_DELETE_$($zone.Name.ToUpperInvariant())" }
         & $kubectl wait --for=delete "namespace/$($zone.Namespace)" --timeout=120s | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "BLOCKED_NAMESPACE_DELETE_WAIT_$($zone.Name.ToUpperInvariant())" }
-    }
-
-    if ($DeleteCluster) {
-        if ($ownership.cluster_created_by_haowork -isnot [bool] -or $ownership.cluster_created_by_haowork -ne $true) { throw 'BLOCKED_CLUSTER_OWNERSHIP' }
-        & $kind delete cluster --name $ClusterName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_KIND_DELETE' }
-        Remove-P005V122DeploymentOwnership -CacheRoot $cacheRoot -ClusterName $ClusterName
-        Write-Output 'PASS P0-05 v1.2.2 owned releases, namespaces, and Kind cluster were removed; evidence and Docker Desktop data were preserved.'
-        return
     }
 
     $ownership.namespaces = @()

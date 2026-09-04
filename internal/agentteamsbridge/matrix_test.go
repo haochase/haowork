@@ -59,7 +59,7 @@ func TestMatrixV3LoginAndSendUseOfficialEndpoints(t *testing.T) {
 			if !ok || artifact["uri"] != "environments/public/missions/MSN-001/artifacts/abc" || artifact["sha256"] != strings.Repeat("a", 64) || artifact["environmentID"] != "public" || artifact["size"] != float64(42) {
 				t.Fatalf("send artifact evidence = %#v", artifact)
 			}
-			if body["msgtype"] != "m.notice" || body["org.haowork.mission_id"] != "MSN-001" || body["org.haowork.artifact_ref"] != "environments/public/missions/MSN-001/artifacts/abc" {
+			if body["msgtype"] != "m.text" || body["body"] != "Haowork governed mission assigned. Read the attached mission reference and reply with a concise completion summary." || body["org.haowork.mission_id"] != "MSN-001" || body["org.haowork.artifact_ref"] != "environments/public/missions/MSN-001/artifacts/abc" {
 				t.Fatalf("send body = %#v", body)
 			}
 			_, _ = response.Write([]byte(`{"event_id":"$event-001"}`))
