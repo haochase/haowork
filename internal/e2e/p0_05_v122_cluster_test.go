@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -45,10 +46,12 @@ func TestP005V122CrossZoneProbeTargetsUseOfficialHelmServices(t *testing.T) {
 		got[target.Component] = target.URL
 	}
 	want := map[string]string{
-		"matrix":    "http://haowork-internal-agentteams-tuwunel.haowork-internal.svc.cluster.local:6167/_matrix/client/versions",
-		"minio":     "http://haowork-internal-agentteams-minio.haowork-internal.svc.cluster.local:9000/minio/health/live",
-		"higress":   "http://higress-gateway.haowork-internal.svc.cluster.local/",
-		"team_core": "http://haowork-core-bridge.haowork-internal.svc.cluster.local:8081/ready",
+		"matrix":  "http://haowork-internal-agentteams-tuwunel.haowork-internal.svc.cluster.local:6167/_matrix/client/versions",
+		"minio":   "http://haowork-internal-agentteams-minio.haowork-internal.svc.cluster.local:9000/minio/health/live",
+		"higress": "http://higress-gateway.haowork-internal.svc.cluster.local/",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("probe targets = %#v, want only deployed dual-zone services %#v", got, want)
 	}
 	for component, expected := range want {
 		if got[component] != expected {
@@ -110,6 +113,13 @@ func TestP005V122BindingRolloutAnnotationsChangeWithSecretResourceVersion(t *tes
 	}
 	if first["haowork.io/runtime-binding-resource-version"] == second["haowork.io/runtime-binding-resource-version"] {
 		t.Fatal("updated Secret resource version must force a new MCP Pod template")
+	}
+}
+
+func TestP005V122MissionConfigRequiresPinnedManagerImage(t *testing.T) {
+	image := p005V122RequiredManagerImage("registry.example.test/agentteams-manager:v1.2.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if !strings.Contains(image, "@sha256:") {
+		t.Fatalf("manager image = %q", image)
 	}
 }
 

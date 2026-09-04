@@ -28,6 +28,7 @@ type OfficialResourceConfig struct {
 	ControllerName string
 	Model          string
 	ManagerRuntime string
+	ManagerImage   string
 	WorkerRuntime  string
 	MCPServerName  string
 	MCPServerURL   string
@@ -86,6 +87,7 @@ func RenderOfficialMissionResources(envelope model.MissionEnvelope, config Offic
 	manager := officialObject("Manager", teamName+"-manager", config.Namespace, labels, annotations, map[string]any{
 		"model":      strings.TrimSpace(config.Model),
 		"runtime":    strings.TrimSpace(config.ManagerRuntime),
+		"image":      strings.TrimSpace(config.ManagerImage),
 		"skills":     missionSkillNames(envelope),
 		"mcpServers": officialMCPServers(config),
 		"state":      "Running",
@@ -153,6 +155,11 @@ func validateOfficialResourceInput(envelope model.MissionEnvelope, config Offici
 	}
 	if len(strings.TrimSpace(envelope.Hash)) != sha256.Size*2 {
 		return fmt.Errorf("mission hash must be a SHA-256 hex digest")
+	}
+	managerImage := strings.TrimSpace(config.ManagerImage)
+	parts := strings.Split(managerImage, "@sha256:")
+	if len(parts) != 2 || parts[0] == "" || !isLowerSHA256(parts[1]) {
+		return fmt.Errorf("official AgentTeams Manager image must be digest pinned")
 	}
 	if _, err := hex.DecodeString(strings.TrimSpace(envelope.Hash)); err != nil {
 		return fmt.Errorf("mission hash must be a SHA-256 hex digest: %w", err)

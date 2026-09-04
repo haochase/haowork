@@ -102,7 +102,7 @@ func productionConfig(t *testing.T) agentteamsbridge.ProductionConfig {
 		MCPConsumerName: "haowork-agentteams",
 		MCPRouteName:    "haowork-mcp-route",
 		ResourceConfig: agentteamsbridge.OfficialResourceConfig{
-			Model: "model", ManagerRuntime: "manager", WorkerRuntime: "worker", HumanName: "Owner",
+			Model: "model", ManagerRuntime: "manager", ManagerImage: "registry.example.test/agentteams-manager:v1.2.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", WorkerRuntime: "worker", HumanName: "Owner",
 			MCPServerURL: "http://haowork-mcp.agentteams-public.svc.cluster.local:8080/mcp", MCPTransport: "http",
 		},
 		RuntimeBindings: productionBindings{},

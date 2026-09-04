@@ -101,8 +101,8 @@ func normalizedProductionResources(config ProductionConfig) (OfficialResourceCon
 	resources.Namespace = strings.TrimSpace(config.Namespace)
 	resources.ControllerName = strings.TrimSpace(config.ControllerName)
 	resources.MCPServerName = strings.TrimSpace(config.MCPServerName)
-	if strings.TrimSpace(resources.Model) == "" || strings.TrimSpace(resources.ManagerRuntime) == "" || strings.TrimSpace(resources.WorkerRuntime) == "" || strings.TrimSpace(resources.HumanName) == "" || strings.TrimSpace(resources.MCPServerURL) == "" || strings.TrimSpace(resources.MCPTransport) == "" {
-		return OfficialResourceConfig{}, errors.New("official AgentTeams resource model, runtimes, human, and MCP endpoint are required")
+	if strings.TrimSpace(resources.Model) == "" || strings.TrimSpace(resources.ManagerRuntime) == "" || strings.TrimSpace(resources.ManagerImage) == "" || strings.TrimSpace(resources.WorkerRuntime) == "" || strings.TrimSpace(resources.HumanName) == "" || strings.TrimSpace(resources.MCPServerURL) == "" || strings.TrimSpace(resources.MCPTransport) == "" {
+		return OfficialResourceConfig{}, errors.New("official AgentTeams resource model, manager image, runtimes, human, and MCP endpoint are required")
 	}
 	return resources, nil
 }

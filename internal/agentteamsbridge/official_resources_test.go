@@ -160,7 +160,7 @@ func assertOfficialManager(t *testing.T, object *unstructured.Unstructured) {
 	if object.GetKind() != "Manager" {
 		t.Fatalf("manager kind = %q", object.GetKind())
 	}
-	for field, want := range map[string]string{"model": "qwen3.5-plus", "runtime": "qwenpaw", "state": "Running"} {
+	for field, want := range map[string]string{"model": "qwen3.5-plus", "runtime": "qwenpaw", "image": "registry.example.test/agentteams-manager:v1.2.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "state": "Running"} {
 		got, found, err := unstructured.NestedString(object.Object, "spec", field)
 		if err != nil || !found || got != want {
 			t.Fatalf("manager spec.%s = %q, found=%t err=%v, want %q", field, got, found, err, want)
@@ -246,6 +246,7 @@ func officialTestResourceConfig() agentteamsbridge.OfficialResourceConfig {
 		ControllerName: "agentteams-public",
 		Model:          "qwen3.5-plus",
 		ManagerRuntime: "qwenpaw",
+		ManagerImage:   "registry.example.test/agentteams-manager:v1.2.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		WorkerRuntime:  "openclaw",
 		MCPServerName:  "haowork-mcp",
 		MCPServerURL:   "https://higress.example.test/mcp",

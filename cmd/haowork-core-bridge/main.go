@@ -19,14 +19,14 @@ import (
 )
 
 type runtimeConfig struct {
-	listenAddr, stateRoot, token, projectID        string
-	environmentID, namespace, controllerName       string
-	matrixURL, matrixToken                         string
-	s3Endpoint, s3AccessKey, s3SecretKey, s3Bucket string
-	higressURL, higressUsername, higressPassword   string
-	mcpServerName, mcpConsumerName, mcpRouteName   string
-	modelName, managerRuntime, workerRuntime       string
-	mcpURL, mcpTransport, humanName                string
+	listenAddr, stateRoot, token, projectID                string
+	environmentID, namespace, controllerName               string
+	matrixURL, matrixToken                                 string
+	s3Endpoint, s3AccessKey, s3SecretKey, s3Bucket         string
+	higressURL, higressUsername, higressPassword           string
+	mcpServerName, mcpConsumerName, mcpRouteName           string
+	modelName, managerRuntime, managerImage, workerRuntime string
+	mcpURL, mcpTransport, humanName                        string
 }
 
 func requiredEnvironmentNames() []string {
@@ -37,7 +37,7 @@ func requiredEnvironmentNames() []string {
 		"HAOWORK_CORE_S3_ACCESS_KEY", "HAOWORK_CORE_S3_SECRET_KEY", "HAOWORK_CORE_S3_BUCKET",
 		"HAOWORK_CORE_HIGRESS_CONSOLE_URL", "HAOWORK_CORE_HIGRESS_USERNAME", "HAOWORK_CORE_HIGRESS_PASSWORD",
 		"HAOWORK_CORE_MCP_SERVER_NAME", "HAOWORK_CORE_MCP_CONSUMER_NAME", "HAOWORK_CORE_MCP_ROUTE_NAME",
-		"HAOWORK_CORE_MODEL", "HAOWORK_CORE_MANAGER_RUNTIME", "HAOWORK_CORE_WORKER_RUNTIME",
+		"HAOWORK_CORE_MODEL", "HAOWORK_CORE_MANAGER_RUNTIME", "HAOWORK_CORE_MANAGER_IMAGE", "HAOWORK_CORE_WORKER_RUNTIME",
 		"HAOWORK_CORE_MCP_URL", "HAOWORK_CORE_MCP_TRANSPORT", "HAOWORK_CORE_HUMAN_NAME",
 	}
 }
@@ -58,7 +58,7 @@ func loadConfig() (runtimeConfig, error) {
 		s3Endpoint: values["HAOWORK_CORE_S3_ENDPOINT"], s3AccessKey: values["HAOWORK_CORE_S3_ACCESS_KEY"], s3SecretKey: values["HAOWORK_CORE_S3_SECRET_KEY"], s3Bucket: values["HAOWORK_CORE_S3_BUCKET"],
 		higressURL: values["HAOWORK_CORE_HIGRESS_CONSOLE_URL"], higressUsername: values["HAOWORK_CORE_HIGRESS_USERNAME"], higressPassword: values["HAOWORK_CORE_HIGRESS_PASSWORD"],
 		mcpServerName: values["HAOWORK_CORE_MCP_SERVER_NAME"], mcpConsumerName: values["HAOWORK_CORE_MCP_CONSUMER_NAME"], mcpRouteName: values["HAOWORK_CORE_MCP_ROUTE_NAME"],
-		modelName: values["HAOWORK_CORE_MODEL"], managerRuntime: values["HAOWORK_CORE_MANAGER_RUNTIME"], workerRuntime: values["HAOWORK_CORE_WORKER_RUNTIME"],
+		modelName: values["HAOWORK_CORE_MODEL"], managerRuntime: values["HAOWORK_CORE_MANAGER_RUNTIME"], managerImage: values["HAOWORK_CORE_MANAGER_IMAGE"], workerRuntime: values["HAOWORK_CORE_WORKER_RUNTIME"],
 		mcpURL: values["HAOWORK_CORE_MCP_URL"], mcpTransport: values["HAOWORK_CORE_MCP_TRANSPORT"], humanName: values["HAOWORK_CORE_HUMAN_NAME"],
 	}, nil
 }
@@ -121,7 +121,7 @@ func main() {
 			MCPServerName: config.mcpServerName, MCPConsumerName: config.mcpConsumerName, MCPRouteName: config.mcpRouteName,
 			ResourceConfig: agentteamsbridge.OfficialResourceConfig{
 				Namespace: config.namespace, ControllerName: config.controllerName, Model: config.modelName,
-				ManagerRuntime: config.managerRuntime, WorkerRuntime: config.workerRuntime, MCPServerName: config.mcpServerName,
+				ManagerRuntime: config.managerRuntime, ManagerImage: config.managerImage, WorkerRuntime: config.workerRuntime, MCPServerName: config.mcpServerName,
 				MCPServerURL: config.mcpURL, MCPTransport: config.mcpTransport, HumanName: config.humanName,
 			},
 			RuntimeBindings: state, Trace: state.TraceStore(), Mission: state.Mission,
