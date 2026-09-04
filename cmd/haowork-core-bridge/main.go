@@ -21,7 +21,7 @@ import (
 type runtimeConfig struct {
 	listenAddr, stateRoot, token, projectID                string
 	environmentID, namespace, controllerName               string
-	matrixURL                                              string
+	matrixURL, matrixAppServiceToken                       string
 	s3Endpoint, s3AccessKey, s3SecretKey, s3Bucket         string
 	higressURL, higressUsername, higressPassword           string
 	mcpServerName, mcpConsumerName, mcpRouteName           string
@@ -33,7 +33,7 @@ func requiredEnvironmentNames() []string {
 	return []string{
 		"HAOWORK_CORE_BRIDGE_LISTEN_ADDR", "HAOWORK_CORE_BRIDGE_STATE_ROOT", "HAOWORK_CORE_BRIDGE_TOKEN", "HAOWORK_CORE_PROJECT_ID",
 		"HAOWORK_CORE_ENVIRONMENT_ID", "HAOWORK_CORE_NAMESPACE", "HAOWORK_CORE_CONTROLLER_NAME",
-		"HAOWORK_CORE_MATRIX_URL", "HAOWORK_CORE_S3_ENDPOINT",
+		"HAOWORK_CORE_MATRIX_URL", "HAOWORK_CORE_MATRIX_APPSERVICE_AS_TOKEN", "HAOWORK_CORE_S3_ENDPOINT",
 		"HAOWORK_CORE_S3_ACCESS_KEY", "HAOWORK_CORE_S3_SECRET_KEY", "HAOWORK_CORE_S3_BUCKET",
 		"HAOWORK_CORE_HIGRESS_CONSOLE_URL", "HAOWORK_CORE_HIGRESS_USERNAME", "HAOWORK_CORE_HIGRESS_PASSWORD",
 		"HAOWORK_CORE_MCP_SERVER_NAME", "HAOWORK_CORE_MCP_CONSUMER_NAME", "HAOWORK_CORE_MCP_ROUTE_NAME",
@@ -54,7 +54,7 @@ func loadConfig() (runtimeConfig, error) {
 	return runtimeConfig{
 		listenAddr: values["HAOWORK_CORE_BRIDGE_LISTEN_ADDR"], stateRoot: values["HAOWORK_CORE_BRIDGE_STATE_ROOT"], token: values["HAOWORK_CORE_BRIDGE_TOKEN"], projectID: values["HAOWORK_CORE_PROJECT_ID"],
 		environmentID: values["HAOWORK_CORE_ENVIRONMENT_ID"], namespace: values["HAOWORK_CORE_NAMESPACE"], controllerName: values["HAOWORK_CORE_CONTROLLER_NAME"],
-		matrixURL:  values["HAOWORK_CORE_MATRIX_URL"],
+		matrixURL: values["HAOWORK_CORE_MATRIX_URL"], matrixAppServiceToken: values["HAOWORK_CORE_MATRIX_APPSERVICE_AS_TOKEN"],
 		s3Endpoint: values["HAOWORK_CORE_S3_ENDPOINT"], s3AccessKey: values["HAOWORK_CORE_S3_ACCESS_KEY"], s3SecretKey: values["HAOWORK_CORE_S3_SECRET_KEY"], s3Bucket: values["HAOWORK_CORE_S3_BUCKET"],
 		higressURL: values["HAOWORK_CORE_HIGRESS_CONSOLE_URL"], higressUsername: values["HAOWORK_CORE_HIGRESS_USERNAME"], higressPassword: values["HAOWORK_CORE_HIGRESS_PASSWORD"],
 		mcpServerName: values["HAOWORK_CORE_MCP_SERVER_NAME"], mcpConsumerName: values["HAOWORK_CORE_MCP_CONSUMER_NAME"], mcpRouteName: values["HAOWORK_CORE_MCP_ROUTE_NAME"],
@@ -97,7 +97,7 @@ func main() {
 			return nil, errors.New("Mission environment does not match Core Bridge zone")
 		}
 		matrixClient, err := agentteamsbridge.NewKubernetesHumanMatrixClient(dynamicClient, config.namespace, agentteamsbridge.MatrixV3Config{
-			BaseURL: config.matrixURL, AllowInsecureClusterLocal: true,
+			BaseURL: config.matrixURL, AppServiceToken: config.matrixAppServiceToken, AllowInsecureClusterLocal: true,
 		})
 		if err != nil {
 			return nil, err

@@ -35,6 +35,9 @@ func NewKubernetesHumanMatrixClient(kubernetes dynamic.Interface, namespace stri
 		return nil, errors.New("Kubernetes Human Matrix client requires a dynamic client and namespace")
 	}
 	config.Username, config.Password, config.AccessToken, config.ExpectedUserID = "", "", "", ""
+	if strings.TrimSpace(config.AppServiceToken) == "" {
+		return nil, errors.New("Kubernetes Human Matrix client requires an AppService token")
+	}
 	if _, err := NewMatrixV3Client(config); err != nil {
 		return nil, err
 	}
@@ -55,12 +58,12 @@ func (client *KubernetesHumanMatrixClient) BindHuman(ctx context.Context, identi
 	phase, _, _ := unstructuredString(human.Object, "status", "phase")
 	username, _, _ := unstructuredString(human.Object, "spec", "username")
 	principal, _, _ := unstructuredString(human.Object, "status", "matrixUserID")
-	password, _, _ := unstructuredString(human.Object, "status", "initialPassword")
-	if string(human.GetUID()) != identity.UID || principal != identity.PrincipalID || phase != "Active" || username == "" || password == "" || !strings.HasPrefix(principal, "@"+username+":") {
+	if human.GetDeletionTimestamp() != nil || string(human.GetUID()) != identity.UID || principal != identity.PrincipalID || phase != "Active" || username == "" || !strings.HasPrefix(principal, "@"+username+":") {
 		return errors.New("official AgentTeams Human Matrix identity is not ready")
 	}
 	config := client.config
-	config.Username, config.Password, config.ExpectedUserID = username, password, principal
+	client.config.AppServiceToken = ""
+	config.Username, config.ExpectedUserID = username, principal
 	bound, err := NewMatrixV3Client(config)
 	if err != nil {
 		return err

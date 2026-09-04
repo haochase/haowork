@@ -42,6 +42,11 @@ Assert-True ($text.Contains("@.name=='worker'") -and $coreBridgeText.Contains("n
 Assert-True ($text.Contains("([string](& `$kubectl get secret haowork-core-bridge-runtime")) 'missing Core Bridge Secret output must be converted before Trim so the explicit blocker is preserved'
 Assert-True (-not $coreBridgeText.Contains('core-bridge.token')) 'Core Bridge must not persist its bearer token outside Kubernetes'
 Assert-True ($coreBridgeText.Contains('Write-P005V122SecretFile')) 'Core Bridge must atomically create its temporary Secret input file with a protected ACL'
+Assert-True ($coreBridgeText.Contains('haowork-public-agentteams-runtime-env')) 'Core Bridge must derive Matrix AppService credentials from the official release runtime Secret'
+Assert-True ($coreBridgeText.Contains('AGENTTEAMS_MATRIX_APPSERVICE_AS_TOKEN')) 'Core Bridge must read the official AgentTeams AppService token key'
+Assert-True ($coreBridgeText.Contains('matrix-appservice-as-token')) 'Core Bridge must inject the AppService token only through its Kubernetes runtime Secret'
+Assert-True ($coreBridgeText.Contains("([string](& `$kubectl get secret haowork-public-agentteams-runtime-env")) 'missing AppService Secret output must be converted before Trim so the explicit blocker is preserved'
+Assert-True ($coreBridgeText.Contains('ConvertFrom-P005V122AppServiceToken')) 'Core Bridge must normalize malformed AppService credentials to an explicit blocker'
 foreach ($required in @('haowork-network-probe', 'Dockerfile.network-probe', 'haowork-network-probe-public.yaml', 'haowork-network-probe-internal.yaml')) {
     Assert-True ($coreBridgeText.Contains($required)) "Core Bridge deployment omits network probe dependency $required"
 }
@@ -53,6 +58,11 @@ if ($env:OS -eq 'Windows_NT' -and $PSVersionTable.PSEdition -eq 'Desktop') {
     $coreMarkerIndex = $coreBridgeText.IndexOf($coreMarker, [StringComparison]::Ordinal)
     Assert-True ($coreMarkerIndex -gt 0) 'Core Bridge script must retain a function-only loading boundary'
     Invoke-Expression $coreBridgeText.Substring(0, $coreMarkerIndex)
+	foreach ($encodedToken in @('', 'not-base64', [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("token`nsecond-line")))) {
+		$blocked = $false
+		try { ConvertFrom-P005V122AppServiceToken -EncodedValue $encodedToken | Out-Null } catch { $blocked = $_.Exception.Message -eq 'BLOCKED_MATRIX_APPSERVICE_TOKEN' }
+		Assert-True $blocked 'invalid AppService token input must return BLOCKED_MATRIX_APPSERVICE_TOKEN'
+	}
     $secretFixture = Join-Path $worktreeRoot '.haowork\cache\tmp\p0-05-core-bridge-secret-file.env'
     New-Item -ItemType Directory -Force (Split-Path $secretFixture -Parent) | Out-Null
     $handle = $null

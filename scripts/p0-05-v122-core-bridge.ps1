@@ -36,6 +36,19 @@ function ConvertFrom-P005V122Base64 {
     return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
 }
 
+function ConvertFrom-P005V122AppServiceToken {
+    param([AllowEmptyString()][string]$EncodedValue)
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($EncodedValue)) { throw 'invalid token' }
+        $value = ConvertFrom-P005V122Base64 -Value $EncodedValue
+        if ([string]::IsNullOrWhiteSpace($value) -or $value.Contains("`n") -or $value.Contains("`r") -or $value.Contains([char]0)) { throw 'invalid token' }
+        return $value
+    } catch {
+        throw 'BLOCKED_MATRIX_APPSERVICE_TOKEN'
+    }
+}
+
 function Write-P005V122SecretFile {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -186,11 +199,14 @@ $managerImage = $managerImages[0]
 $managerBuckets = @($managerPod.spec.containers[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_FS_BUCKET' } | ForEach-Object { [string]$_.value })
 if ($managerBuckets.Count -ne 1 -or $managerBuckets[0] -notmatch '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$') { throw 'BLOCKED_MANAGER_ARTIFACT_BUCKET' }
 $managerBucket = $managerBuckets[0]
+$appServiceTokenEncoded = ([string](& $kubectl get secret haowork-public-agentteams-runtime-env -n haowork-public -o 'jsonpath={.data.AGENTTEAMS_MATRIX_APPSERVICE_AS_TOKEN}')).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($appServiceTokenEncoded)) { throw 'BLOCKED_MATRIX_APPSERVICE_TOKEN' }
+$appServiceToken = ConvertFrom-P005V122AppServiceToken -EncodedValue $appServiceTokenEncoded
 Protect-P005V122SecretDirectory -Path $runtimeRoot
 $runtimeEnvironmentPath = Join-Path $runtimeRoot 'core-bridge.env'
 $runtimeEnvironmentHandle = $null
 try {
-$runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPath -Lines @("token=$bridgeToken", "model=$model", "manager-image=$managerImage", "bucket=$managerBucket")
+$runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPath -Lines @("token=$bridgeToken", "model=$model", "manager-image=$managerImage", "bucket=$managerBucket", "matrix-appservice-as-token=$appServiceToken")
     $runtimeSecret = & $kubectl create secret generic haowork-core-bridge-runtime -n haowork-public --from-env-file=$runtimeEnvironmentPath --dry-run=client -o yaml
     if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET' }
     $runtimeSecret | & $kubectl apply -f - | Out-Null
@@ -200,6 +216,8 @@ $runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPa
     if (Test-Path -LiteralPath $runtimeEnvironmentPath) {
         try { Remove-Item -LiteralPath $runtimeEnvironmentPath -Force -ErrorAction Stop } catch { throw 'BLOCKED_CORE_BRIDGE_SECRET_CLEANUP' }
     }
+    $appServiceToken = $null
+    $appServiceTokenEncoded = $null
 }
 
 $gatewayKeyEncoded = (& $kubectl get secret agentteams-creds-default -n haowork-public -o 'jsonpath={.data.WORKER_GATEWAY_KEY}').Trim()

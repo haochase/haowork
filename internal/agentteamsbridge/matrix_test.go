@@ -109,6 +109,33 @@ func TestMatrixV3LoginRejectsUnexpectedUserID(t *testing.T) {
 	}
 }
 
+func TestMatrixV3AppServiceTokenIsSingleUseAfterRejectedIdentity(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Header.Get("Authorization") != "Bearer test-as-token" {
+			t.Fatalf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		_, _ = response.Write([]byte(`{"access_token":"wrong-token","user_id":"@other:matrix.test"}`))
+	}))
+	defer server.Close()
+	client, err := agentteamsbridge.NewMatrixV3Client(agentteamsbridge.MatrixV3Config{
+		BaseURL: server.URL, Username: "mission-owner", AppServiceToken: "test-as-token", ExpectedUserID: "@mission-owner:matrix.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Login(context.Background()); err == nil {
+		t.Fatal("Matrix AppService login accepted an unexpected user identity")
+	}
+	if err := client.Login(context.Background()); err == nil {
+		t.Fatal("Matrix AppService token was reusable after a rejected identity")
+	}
+	if requests != 1 {
+		t.Fatalf("AppService login requests = %d, want 1", requests)
+	}
+}
+
 func TestMatrixMessagesPreserveOpaquePaginationToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/_matrix/client/v3/rooms/!leader:matrix.test/messages" {
