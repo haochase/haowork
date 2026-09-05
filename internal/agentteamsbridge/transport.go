@@ -340,7 +340,7 @@ func (session *session) Events(ctx context.Context, cursor string) <-chan execut
 				if session.transport.config.EmptyMatrixPollLimit <= 0 || emptyPolls >= session.transport.config.EmptyMatrixPollLimit {
 					code := safeSessionError("matrix_leader_response_missing")
 					if leaderCorrelationMissing {
-						code = safeSessionError("matrix_correlation_missing")
+						code = safeSessionError("matrix_leader_event_unmatched")
 					}
 					session.recordError(code)
 					return

@@ -5,7 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestCoreBridgeRunBudgetCoversTopologyAndMatrixPolling(t *testing.T) {
+	if coreBridgeRunTimeout != 3*time.Minute || coreBridgeHTTPTimeout != 4*time.Minute {
+		t.Fatalf("Core Bridge run/http budgets = %s/%s", coreBridgeRunTimeout, coreBridgeHTTPTimeout)
+	}
+}
 
 func TestLoadConfigRequiresCompleteProductionDependencies(t *testing.T) {
 	t.Setenv("HAOWORK_CORE_BRIDGE_LISTEN_ADDR", "0.0.0.0:8081")

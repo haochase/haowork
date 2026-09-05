@@ -130,6 +130,12 @@ func TestP005V122TopologyWaitCoversObservedColdStart(t *testing.T) {
 	}
 }
 
+func TestP005V122CoreBridgeClientBudgetExceedsServerRunBudget(t *testing.T) {
+	if p005V122CoreBridgeClientTimeout != 4*time.Minute {
+		t.Fatalf("Core Bridge E2E client timeout = %s", p005V122CoreBridgeClientTimeout)
+	}
+}
+
 func TestP005V122FixtureBudgetCoversTopologyAndPostChecks(t *testing.T) {
 	if p005V122FixtureTimeout-p005V122TopologyReadyTimeout < 7*time.Minute {
 		t.Fatalf("fixture timeout %s does not leave enough post-topology budget", p005V122FixtureTimeout)
