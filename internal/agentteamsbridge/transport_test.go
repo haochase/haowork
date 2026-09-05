@@ -339,7 +339,7 @@ func TestTransportReportsSafeReasonWhenLeaderCorrelationIsMissing(t *testing.T) 
 		t.Fatal("event stream did not report a safe terminal reason")
 	}
 	coded, ok := failure.(interface{ SafeCode() string })
-	if !ok || coded.SafeCode() != "matrix_correlation_missing" {
+	if !ok || coded.SafeCode() != "matrix_leader_event_unmatched" {
 		t.Fatalf("terminal error = %#v", failure)
 	}
 }

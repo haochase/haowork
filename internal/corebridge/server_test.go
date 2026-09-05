@@ -145,14 +145,36 @@ func TestServerReturnsOnlySafeSessionFailureReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	starter := &fakeStarter{terminalErr: safeTestError{code: "matrix_correlation_missing"}, pages: [][]executor.AgentTeamsEvent{{}}}
+	starter := &fakeStarter{terminalErr: safeTestError{code: "matrix_leader_event_unmatched"}, pages: [][]executor.AgentTeamsEvent{{}}}
 	server, err := corebridge.NewServer(corebridge.Config{Token: "bridge-token", State: state, Factory: func(model.MissionEnvelope) (corebridge.Starter, error) { return starter, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := invoke(t, server, http.MethodPost, "/v1/runs/start", "bridge-token", startPayload(t, "WORK-1"))
-	if response.Code != http.StatusGatewayTimeout || !strings.Contains(response.Body.String(), `"reason":"matrix_correlation_missing"`) || strings.Contains(response.Body.String(), "private detail") {
+	if response.Code != http.StatusGatewayTimeout || !strings.Contains(response.Body.String(), `"reason":"matrix_leader_event_unmatched"`) || strings.Contains(response.Body.String(), "private detail") {
 		t.Fatalf("response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestServerRejectsPartialEventsWhenSessionEndsWithError(t *testing.T) {
+	state, err := corebridge.OpenState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := [][]executor.AgentTeamsEvent{{{
+		RunID: "RUN-1", StepID: "STEP-1", Kind: "notice", SourceEventID: "$partial", AdapterCursor: "partial-cursor", WorkspaceDigest: strings.Repeat("a", 64),
+	}}}
+	starter := &fakeStarter{terminalErr: safeTestError{code: "matrix_leader_event_unmatched"}, pages: pages}
+	server, err := corebridge.NewServer(corebridge.Config{Token: "bridge-token", State: state, Factory: func(model.MissionEnvelope) (corebridge.Starter, error) { return starter, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := invoke(t, server, http.MethodPost, "/v1/runs/start", "bridge-token", startPayload(t, "WORK-1"))
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), `"error":"event_stream_failed"`) {
+		t.Fatalf("response status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, exists := state.RunRequest("RUN-1"); exists {
+		t.Fatal("partial event stream was persisted as a successful run")
 	}
 }
 

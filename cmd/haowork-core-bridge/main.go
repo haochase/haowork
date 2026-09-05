@@ -29,6 +29,11 @@ type runtimeConfig struct {
 	mcpURL, mcpTransport, humanName                        string
 }
 
+const (
+	coreBridgeRunTimeout  = 3 * time.Minute
+	coreBridgeHTTPTimeout = 4 * time.Minute
+)
+
 func requiredEnvironmentNames() []string {
 	return []string{
 		"HAOWORK_CORE_BRIDGE_LISTEN_ADDR", "HAOWORK_CORE_BRIDGE_STATE_ROOT", "HAOWORK_CORE_BRIDGE_TOKEN", "HAOWORK_CORE_PROJECT_ID",
@@ -129,13 +134,13 @@ func main() {
 		})
 	}
 	server, err := corebridge.NewServer(corebridge.Config{
-		Token: config.token, State: state, Factory: factory, RunTimeout: 90 * time.Second,
+		Token: config.token, State: state, Factory: factory, RunTimeout: coreBridgeRunTimeout,
 		ReportError: func(stage string, err error) { log.Printf("Core Bridge %s failed: %v", stage, err) },
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpServer := &http.Server{Addr: config.listenAddr, Handler: server, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second}
+	httpServer := &http.Server{Addr: config.listenAddr, Handler: server, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: coreBridgeHTTPTimeout, WriteTimeout: coreBridgeHTTPTimeout, IdleTimeout: 30 * time.Second}
 	log.Printf("haowork-core-bridge listening on %s for namespace %s", config.listenAddr, config.namespace)
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)

@@ -70,6 +70,8 @@ type p005V122ClusterFixture struct {
 	missionConfig p005V122MissionConfig
 }
 
+const p005V122CoreBridgeClientTimeout = 4 * time.Minute
+
 type p005V122Zone struct {
 	name      string
 	namespace string
@@ -369,7 +371,7 @@ func (fixture *p005V122ClusterFixture) coreBridgeJSON(method, path string, input
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	response, err := (&http.Client{Timeout: 3 * time.Minute}).Do(request)
+	response, err := (&http.Client{Timeout: p005V122CoreBridgeClientTimeout}).Do(request)
 	if err != nil {
 		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: %v", err)
 	}
