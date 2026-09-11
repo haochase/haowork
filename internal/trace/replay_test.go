@@ -56,6 +56,30 @@ func TestReplayRejectsSelfAndCyclicParentChains(t *testing.T) {
 	}
 }
 
+func TestReplayPreservesCandidateReceiptSemantics(t *testing.T) {
+	record := traceFixture()
+	record.AssignmentID = "ASN-001"
+	record.AssignmentRevision = 2
+	record.GoalVersion = 3
+	record.ContextID = "CTX-001"
+	record.ContextHash = "context-hash"
+	record.LeaseID = "LSE-001"
+	record.ReportSHA256 = "report-hash"
+	record.ReportStatus = "succeeded"
+	record.Candidate = true
+	record.Status = "candidate"
+	record.SourceEventType = "execution.report.submitted"
+
+	projection, err := Replay([]Envelope{record})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, exists := projection.Current(record.ID)
+	if !exists || got.AssignmentID != record.AssignmentID || got.AssignmentRevision != 2 || got.GoalVersion != 3 || got.ContextID != record.ContextID || got.ContextHash != record.ContextHash || got.LeaseID != record.LeaseID || got.ReportSHA256 != record.ReportSHA256 || got.ReportStatus != "succeeded" || !got.Candidate || got.Status != "candidate" {
+		t.Fatalf("candidate receipt projection = %#v", got)
+	}
+}
+
 func artifactFixture() model.ArtifactRef {
 	return model.ArtifactRef{Kind: "audit", URI: "artifact://internal/private.log", SHA256: "artifact-hash"}
 }

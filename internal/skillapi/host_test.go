@@ -5,35 +5,83 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestFileRuntimeConsumerAuthenticatorReloadsBindingForEveryRequest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp-bindings.json")
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	writeBinding := func(key, actor string) {
+		t.Helper()
+		digest := sha256.Sum256([]byte(key))
+		document := `{"schema_version":1,"bindings":[{"consumer_name":"worker-leader","credential_sha256":"` + hex.EncodeToString(digest[:]) + `","observed_at":"` + now.Format(time.RFC3339Nano) + `","expires_at":"` + now.Add(2*time.Minute).Format(time.RFC3339Nano) + `","principal":{"logical_actor_id":"` + actor + `","runtime_principal_id":"@leader:matrix.test","environment_id":"public","agentteams_instance_id":"haowork-msn-001","binding_revision":2}}]}`
+		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBinding("first-key", "AGT-FIRST")
+	authenticator, err := NewFileRuntimeConsumerAuthenticatorWithClock(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request.Header.Set("Authorization", "Bearer first-key")
+	principal, err := authenticator.Authenticate(context.Background(), request)
+	if err != nil || principal.LogicalActorID != "AGT-FIRST" {
+		t.Fatalf("first binding principal=%#v err=%v", principal, err)
+	}
+	writeBinding("second-key", "AGT-SECOND")
+	request = httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request.Header.Set("Authorization", "Bearer second-key")
+	principal, err = authenticator.Authenticate(context.Background(), request)
+	if err != nil || principal.LogicalActorID != "AGT-SECOND" {
+		t.Fatalf("reloaded binding principal=%#v err=%v", principal, err)
+	}
+	request.Header.Set("Authorization", "Bearer first-key")
+	if _, err := authenticator.Authenticate(context.Background(), request); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("rotated credential error=%v, want ErrUnauthenticated", err)
+	}
+	now = now.Add(3 * time.Minute)
+	request.Header.Set("Authorization", "Bearer second-key")
+	if _, err := authenticator.Authenticate(context.Background(), request); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("expired credential error=%v, want ErrUnauthenticated", err)
+	}
+}
 
 func TestRuntimeConsumerAuthenticatorParsesDigestOnlyBindings(t *testing.T) {
 	const gatewayKey = "higress-worker-build-key"
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	digest := sha256.Sum256([]byte(gatewayKey))
-	authenticator, err := ParseRuntimeConsumerAuthenticator(strings.NewReader(`{
+	authenticator, err := ParseRuntimeConsumerAuthenticatorAt(strings.NewReader(`{
+  "schema_version": 1,
   "bindings": [{
     "consumer_name": "worker-build",
-    "credential_sha256": "` + hex.EncodeToString(digest[:]) + `",
+    "credential_sha256": "`+hex.EncodeToString(digest[:])+`",
+    "observed_at": "`+now.Format(time.RFC3339Nano)+`",
+    "expires_at": "`+now.Add(2*time.Minute).Format(time.RFC3339Nano)+`",
     "principal": {
       "logical_actor_id": "AGT-BUILD",
-      "runtime_principal_id": "runtime-build",
+      "runtime_principal_id": "@build:matrix.test",
       "environment_id": "public",
-      "agentteams_instance_id": "AT-001",
+      "agentteams_instance_id": "at-001",
       "binding_revision": 2
     }
   }]
-}`))
+}`), now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	request.Header.Set("Authorization", "Bearer "+gatewayKey)
 	principal, err := authenticator.Authenticate(context.Background(), request)
-	if err != nil || principal.LogicalActorID != "AGT-BUILD" || principal.RuntimePrincipalID != "runtime-build" {
+	if err != nil || principal.LogicalActorID != "AGT-BUILD" || principal.RuntimePrincipalID != "@build:matrix.test" {
 		t.Fatalf("parsed principal = %#v, err=%v", principal, err)
 	}
 	if _, err := ParseRuntimeConsumerAuthenticator(strings.NewReader(`{"bindings":[],"gateway_key":"must-not-be-accepted"}`)); err == nil {

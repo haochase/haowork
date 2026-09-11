@@ -8,7 +8,13 @@ metadata:
   labels:
     haowork.io/zone: public
 spec:
-  podSelector: {}
+  # The route publisher has a stricter policy in its own manifest. Excluding
+  # it here prevents Kubernetes from unioning this broad same-zone allowance.
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: ["haowork-higress-binding-publisher"]
   policyTypes:
     - Ingress
     - Egress

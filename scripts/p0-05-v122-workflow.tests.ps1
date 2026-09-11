@@ -36,8 +36,10 @@ foreach ($script in @(
     'p0-05-v122-workflow.tests.ps1',
     'p0-05-v122-common.tests.ps1',
     'p0-05-v122-env.tests.ps1',
+    'p0-05-v122-upgrade-credentials.tests.ps1',
     'p0-05-v122-cluster-test.tests.ps1',
     'p0-05-v122-higress.tests.ps1',
+    'p0-05-v122-egress.tests.ps1',
     'p0-05-v122-network.tests.ps1',
     'p0-05-v122-process.tests.ps1',
     'p0-05-v122-provider.tests.ps1',
@@ -75,6 +77,8 @@ Assert-True ($realText.Contains('Import-P005V122LocalEnvironment')) 'real E2E mu
 Assert-True ($realText.Contains('-OverrideExisting') -and $realText.Contains('-RequireComplete')) 'real E2E must replace ambient values and require all ten fields from the runner-local file'
 Assert-True ($realText.Contains('::add-mask::')) 'real E2E must mask local runtime values before invoking scripts'
 Assert-True (-not $realText.Contains('GITHUB_ENV')) 'real E2E must not persist local runtime values through GITHUB_ENV'
+Assert-True ($realText.Contains("throw 'BLOCKED_RUNNER_LOCAL_ENV'")) 'real E2E must fail closed when runner-local configuration is absent'
+Assert-True ($realText.Contains('BLOCKED_INTERNAL_ENV')) 'real E2E must distinguish missing internal-zone configuration'
 Assert-True ($realText.Contains('HAOWORK_E2E_CLUSTER_NAME: ${{ inputs.cluster_name }}')) 'cluster name must enter PowerShell through a non-secret environment variable'
 Assert-True (-not $realText.Contains("-ClusterName '`${{ inputs.cluster_name }}'")) 'cluster name must not be interpolated into PowerShell source'
 

@@ -23,12 +23,14 @@ import (
 
 	"github.com/haochase/haowork/internal/agentteamsbridge"
 	"github.com/haochase/haowork/internal/corebridge"
+	"github.com/haochase/haowork/internal/executionreceipt"
 	"github.com/haochase/haowork/internal/executor"
 	"github.com/haochase/haowork/internal/model"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -100,6 +102,30 @@ type p005V122ProbeTarget struct {
 	URL       string
 	Service   string
 	Namespace string
+}
+
+type p005V122StructuredRun struct {
+	mission      model.MissionEnvelope
+	request      executor.AgentTeamsStartRequest
+	assignmentID string
+	report       executionreceipt.ExecutionReport
+	reportSHA256 string
+	evidence     corebridge.RunEvidence
+}
+
+type p005V122CoreStartResult struct {
+	evidence corebridge.RunEvidence
+	status   int
+	code     string
+	reason   string
+	err      error
+}
+
+type p005V122MCPResult struct {
+	status  int
+	isError bool
+	code    string
+	payload map[string]any
 }
 
 func newP005V122ClusterFixture(t *testing.T) *p005V122ClusterFixture {
@@ -188,7 +214,7 @@ func (fixture *p005V122ClusterFixture) requireFiveRoleTopology() agentteamsbridg
 	fixture.t.Helper()
 	fixture.requireOfficialBaseline()
 	config := fixture.missionConfigForPublicZone()
-	mission := fixture.missionEnvelope(config.missionID)
+	mission := fixture.missionEnvelopeForEnvironment(fixture.publicZone.name, config.missionID)
 	control := agentteamsbridge.NewKubernetesControlPlane(fixture.dynamic, fixture.discovery, fixture.publicZone.namespace, config.controllerName)
 	orchestrator := agentteamsbridge.OfficialMissionOrchestrator{Control: control, Config: agentteamsbridge.OfficialResourceConfig{
 		Namespace: fixture.publicZone.namespace, ControllerName: config.controllerName, Model: config.model,
@@ -221,9 +247,8 @@ func (fixture *p005V122ClusterFixture) requireFiveRoleTopology() agentteamsbridg
 		fixture.t.Fatalf("BLOCKED_FIVE_ROLE_TOPOLOGY: observed topology is incomplete")
 	}
 	fixture.evidence.record(fixture.t, "topology", map[string]any{
-		"team_name": topology.TeamName, "team_room_id": topology.TeamRoomID, "manager_room_id": topology.ManagerRoomID, "leader_room_id": topology.LeaderRoomID,
-		"manager_principal_id": topology.ManagerPrincipalID, "leader_principal_id": topology.LeaderPrincipalID,
-		"worker_principal_ids": topology.WorkerPrincipalIDs, "human_principal_id": topology.HumanPrincipalID,
+		"team_name": topology.TeamName, "room_kind": "leader_dm", "zone": fixture.publicZone.name,
+		"agent_roles": []string{"manager", "delivery_leader", "research", "build", "verify"},
 	})
 	return topology
 }
@@ -252,35 +277,18 @@ func (fixture *p005V122ClusterFixture) requireRoleScopedSkills(topology agenttea
 
 func (fixture *p005V122ClusterFixture) requireMatrixArtifactAndMCPDataPath(topology agentteamsbridge.RuntimeTopology) {
 	fixture.t.Helper()
-	fixture.requireRemoteCoreBridge()
-	mission := fixture.missionEnvelope(fixture.missionConfigForPublicZone().missionID)
-	executionID := p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_EXECUTION_ID")
-	runID, err := p005V122GovernedRunID("data", executionID)
-	if err != nil {
-		fixture.t.Fatalf("BLOCKED_CLUSTER_EXECUTION_ID: %v", err)
-	}
-	request := fixture.productionStartRequest(mission, topology, runID, "WORK-P005-V122-DATA-"+strings.TrimPrefix(runID, "RUN-P005-V122-DATA-"))
-	evidence := fixture.startCoreBridge(mission, request)
-	if len(evidence.SourceEventIDs) == 0 || len(evidence.Artifacts) == 0 || evidence.Cursor == "" {
-		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE_EVIDENCE: evidence=%#v", evidence)
-	}
-	artifact := evidence.Artifacts[0]
-	artifactURI := "s3://" + fixture.managerArtifactBucket(fixture.publicZone) + "/" + artifact.Key
-	parsedArtifact, err := url.Parse(artifactURI)
-	if err != nil || parsedArtifact.Scheme != "s3" || parsedArtifact.Host == "" || strings.TrimPrefix(parsedArtifact.Path, "/") == "" || !p005V122SHA256(artifact.SHA256) || artifact.EnvironmentID != mission.EnvironmentID || artifact.Size <= 0 {
-		fixture.t.Fatalf("BLOCKED_ARTIFACT_EVIDENCE: artifact=%#v err=%v", artifact, err)
-	}
-	fixture.configureMCPRuntimeBinding(topology, evidence.RuntimeBindingRevision)
-	traceID := "TRC-P005-V122-" + strings.TrimPrefix(runID, "RUN-P005-V122-DATA-")
-	fixture.callGovernedHistory(mission, request, traceID)
-	evidence = fixture.readCoreBridgeEvidence(request.RunID)
-	if !p005V122Contains(evidence.TraceIDs, traceID) || !p005V122SHA256(evidence.TraceSHA256) || !p005V122SHA256(evidence.CoreHistorySHA256) {
-		fixture.t.Fatalf("BLOCKED_MCP_TRACE_EVIDENCE: evidence=%#v", evidence)
-	}
+	result := fixture.completeStructuredReceiptRun(topology, "data", "DATA")
+	artifact := result.report.Artifacts[0]
+	dispatchEventID := fixture.requireMatrixDispatchEvent(topology, result.request.RunID)
 	fixture.evidence.record(fixture.t, "data_path", map[string]any{
-		"matrix":   map[string]any{"event_id": evidence.SourceEventIDs[0], "sender_id": topology.LeaderPrincipalID, "room_id": topology.LeaderRoomID, "mission_id": mission.ID},
-		"artifact": map[string]any{"uri": artifactURI, "sha256": artifact.SHA256, "size": artifact.Size, "environment_id": artifact.EnvironmentID, "s3_key": strings.TrimPrefix(parsedArtifact.Path, "/")},
-		"mcp":      map[string]any{"consumer_name": "manager", "route_name": "mcp-server-haowork-mcp.internal", "server_name": "haowork-mcp", "trace_id": traceID, "trace_sha256": evidence.TraceSHA256, "core_history_sha256": evidence.CoreHistorySHA256},
+		"assignment": map[string]any{"assignment_id": result.assignmentID, "state": "REPORT_SUBMITTED"},
+		"matrix":     map[string]any{"dispatch_event_id": dispatchEventID, "room_kind": "leader_dm"},
+		"receipt": map[string]any{
+			"receipt_id": result.evidence.ExecutionReceiptIDs[0], "report_sha256": result.reportSHA256,
+			"leader_function": string(model.FunctionDeliveryLeader), "binding_revision": result.evidence.RuntimeBindingRevision,
+		},
+		"artifact": map[string]any{"uri": artifact.URI, "sha256": artifact.SHA256, "size": artifact.Size, "environment_id": artifact.EnvironmentID},
+		"mcp":      map[string]any{"server_name": "haowork-mcp", "consumer_kind": "agentteams_worker", "trace_sha256": result.evidence.TraceSHA256},
 	})
 }
 
@@ -347,105 +355,428 @@ func (fixture *p005V122ClusterFixture) readCoreBridgeEvidence(runID string) core
 	return evidence
 }
 
+func (fixture *p005V122ClusterFixture) requireDeliveryLeaderSubmitsStructuredReceipt(topology agentteamsbridge.RuntimeTopology) {
+	fixture.t.Helper()
+	result := fixture.completeStructuredReceiptRun(topology, "leader", "DATA")
+	if len(result.evidence.ExecutionReceiptIDs) != 1 || !executionreceipt.ValidReceiptID(result.evidence.ExecutionReceiptIDs[0]) ||
+		len(result.evidence.SourceEventIDs) != 1 || result.evidence.SourceEventIDs[0] != result.evidence.ExecutionReceiptIDs[0] ||
+		result.evidence.Cursor != result.evidence.ExecutionReceiptIDs[0] {
+		fixture.t.Fatalf("BLOCKED_DELIVERY_LEADER_RECEIPT: structured receipt evidence is incomplete")
+	}
+	candidateTraceID := "TRC-" + strings.TrimPrefix(result.evidence.ExecutionReceiptIDs[0], "ERC-")
+	if p005V122Count(result.evidence.TraceIDs, candidateTraceID) != 1 || !p005V122SHA256(result.evidence.TraceSHA256) {
+		fixture.t.Fatal("BLOCKED_DELIVERY_LEADER_RECEIPT: candidate trace is missing or duplicated")
+	}
+}
+
+func (fixture *p005V122ClusterFixture) allZones() []p005V122Zone {
+	return []p005V122Zone{fixture.publicZone, fixture.internalZone}
+}
+
+func (fixture *p005V122ClusterFixture) withZone(zone p005V122Zone, action func()) {
+	fixture.t.Helper()
+	originalPublic, originalInternal := fixture.publicZone, fixture.internalZone
+	originalMissionConfig := fixture.missionConfig
+	other := fixture.publicZone
+	if zone.name == fixture.publicZone.name {
+		other = fixture.internalZone
+	}
+	fixture.publicZone = zone
+	fixture.internalZone = other
+	fixture.missionConfig = p005V122MissionConfig{}
+	keys := []string{"MISSION_ID", "CONTROLLER_NAME", "MODEL", "MANAGER_IMAGE", "MCP_URL", "MCP_SERVER_NAME", "MCP_TRANSPORT", "HUMAN_NAME"}
+	original := make(map[string]string, len(keys))
+	for _, key := range keys {
+		name := "HAOWORK_P005_CLUSTER_" + key
+		original[name] = os.Getenv(name)
+		value := os.Getenv(p005V122ZoneEnv(zone, key))
+		if value != "" {
+			_ = os.Setenv(name, value)
+		}
+	}
+	defer func() {
+		fixture.publicZone, fixture.internalZone = originalPublic, originalInternal
+		fixture.missionConfig = originalMissionConfig
+		for key, value := range original {
+			if value == "" {
+				_ = os.Unsetenv(key)
+			} else {
+				_ = os.Setenv(key, value)
+			}
+		}
+	}()
+	action()
+}
+
+func p005V122ZoneEnvPrefix(zone p005V122Zone) string {
+	return "HAOWORK_P005_CLUSTER_" + strings.ToUpper(zone.name)
+}
+
+func p005V122ZoneEnv(zone p005V122Zone, suffix string) string {
+	return p005V122ZoneEnvPrefix(zone) + "_" + suffix
+}
+
+func (fixture *p005V122ClusterFixture) zoneMissionEnvelope(zone p005V122Zone) model.MissionEnvelope {
+	fixture.t.Helper()
+	mission := fixture.missionEnvelopeForEnvironment(zone.name, p005V122RequiredEnv(fixture.t, p005V122ZoneEnv(zone, "MISSION_ID")))
+	return mission
+}
+
+func (fixture *p005V122ClusterFixture) requireMatrixReplyWithoutReceiptRemainsBlocked(topology agentteamsbridge.RuntimeTopology) {
+	fixture.t.Helper()
+	mission, request, assignmentID, _ := fixture.structuredReceiptInput(topology, "matrix-only", "DATA")
+	start := fixture.startCoreBridgeAsync(mission, request)
+	runID := request.RunID
+	fixture.requireMatrixDispatchEvent(topology, runID)
+	fixture.sendMatrixReply(topology, runID, assignmentID)
+	select {
+	case result := <-start:
+		if result.status != http.StatusGatewayTimeout || result.code != "no_governed_event" {
+			fixture.t.Fatalf("BLOCKED_MATRIX_WITHOUT_RECEIPT: expected HTTP 504 no_governed_event, got status=%d code=%q", result.status, result.code)
+		}
+		status, code, _, err := fixture.coreBridgeRequest(fixture.ctx, http.MethodGet, "/v1/runs/"+url.PathEscape(runID)+"/evidence", nil, nil)
+		if err != nil || status != http.StatusNotFound || code != "evidence_not_found" {
+			fixture.t.Fatalf("BLOCKED_MATRIX_WITHOUT_RECEIPT: evidence or candidate trace was persisted")
+		}
+		var traceExistence corebridge.CandidateTraceExistence
+		fixture.coreBridgeJSON(http.MethodGet, "/v1/runs/"+url.PathEscape(runID)+"/candidate-trace-existence", nil, &traceExistence)
+		if traceExistence.RunID != runID || traceExistence.CandidateTraceExists {
+			fixture.t.Fatal("BLOCKED_MATRIX_WITHOUT_RECEIPT: candidate trace was persisted")
+		}
+		var receiptExistence corebridge.ReceiptExistence
+		fixture.coreBridgeJSON(http.MethodGet, "/v1/assignments/"+url.PathEscape(assignmentID)+"/receipt-existence", nil, &receiptExistence)
+		if receiptExistence.AssignmentID != assignmentID || receiptExistence.ReceiptExists {
+			fixture.t.Fatal("BLOCKED_MATRIX_WITHOUT_RECEIPT: execution receipt was persisted")
+		}
+	case <-fixture.ctx.Done():
+		fixture.t.Fatalf("BLOCKED_MATRIX_WITHOUT_RECEIPT: %v", fixture.ctx.Err())
+	}
+}
+
+func (fixture *p005V122ClusterFixture) requireManagerCannotSubmitLeaderReceipt(topology agentteamsbridge.RuntimeTopology) {
+	fixture.t.Helper()
+	mission, request, assignmentID, report := fixture.structuredReceiptInput(topology, "manager", "DATA")
+	start := fixture.startCoreBridgeAsync(mission, request)
+	managerCredential := fixture.workerGatewayCredential("default", "BLOCKED_MANAGER_CREDENTIAL")
+	defer clear(managerCredential)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		denied := fixture.callReceiptTool(managerCredential, report)
+		if p005V122ManagerDeniedAtGateway(denied) {
+			break
+		}
+		if denied.code == "route_unavailable" && time.Now().Before(deadline) {
+			time.Sleep(time.Second)
+			continue
+		}
+		fixture.t.Fatalf("BLOCKED_MANAGER_RECEIPT_AUTHORIZATION: expected Higress HTTP 401 or 403, got status=%d isError=%t code=%q", denied.status, denied.isError, denied.code)
+	}
+	evidence := fixture.submitLeaderReceiptAndAwait(topology, assignmentID, report, start)
+	if len(evidence.ExecutionReceiptIDs) != 1 {
+		fixture.t.Fatal("BLOCKED_MANAGER_RECEIPT_AUTHORIZATION: cleanup receipt did not complete")
+	}
+}
+
+func (fixture *p005V122ClusterFixture) requireReceiptArtifactDigestMismatchFailsClosed(topology agentteamsbridge.RuntimeTopology) {
+	fixture.t.Helper()
+	mission, request, assignmentID, report := fixture.structuredReceiptInput(topology, "digest", "DATA")
+	start := fixture.startCoreBridgeAsync(mission, request)
+	invalid := report
+	invalid.Artifacts = append([]executionreceipt.Artifact(nil), report.Artifacts...)
+	invalid.Artifacts[0].SHA256 = strings.Repeat("f", 64)
+	leaderCredential := fixture.workerGatewayCredential(topology.TeamName+"-delivery-leader", "BLOCKED_DELIVERY_LEADER_CREDENTIAL")
+	defer clear(leaderCredential)
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		denied := fixture.callReceiptTool(leaderCredential, invalid)
+		if denied.status == http.StatusOK && denied.isError && denied.code == "receipt_schema_invalid" {
+			break
+		}
+		if time.Now().After(deadline) {
+			fixture.t.Fatalf("BLOCKED_ARTIFACT_DIGEST_MISMATCH: mismatch was not rejected with receipt_schema_invalid, status=%d code=%q", denied.status, denied.code)
+		}
+		time.Sleep(time.Second)
+	}
+	evidence := fixture.submitLeaderReceiptAndAwait(topology, assignmentID, report, start)
+	if len(evidence.ExecutionReceiptIDs) != 1 {
+		fixture.t.Fatal("BLOCKED_ARTIFACT_DIGEST_MISMATCH: valid cleanup receipt did not complete")
+	}
+}
+
+func (fixture *p005V122ClusterFixture) requireCrossNamespaceReceiptCallDenied() {
+	fixture.t.Helper()
+	fixture.requireCrossNamespaceTrafficDenied()
+	for _, source := range []p005V122Zone{fixture.publicZone, fixture.internalZone} {
+		targetNamespace := fixture.internalZone.namespace
+		if source.namespace == fixture.internalZone.namespace {
+			targetNamespace = fixture.publicZone.namespace
+		}
+		pods, err := fixture.kubernetes.CoreV1().Pods(source.namespace).List(fixture.ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=haowork-network-probe,haowork.io/zone=" + source.name})
+		if err != nil {
+			fixture.t.Fatalf("BLOCKED_CROSS_NAMESPACE_RECEIPT_%s: probe list failed", strings.ToUpper(source.name))
+		}
+		podName, err := p005V122UniqueRunningProbePod(pods.Items)
+		if err != nil {
+			fixture.t.Fatalf("BLOCKED_CROSS_NAMESPACE_RECEIPT_%s: %v", strings.ToUpper(source.name), err)
+		}
+		target := p005V122ProbeTarget{Component: "receipt", Service: "higress-gateway", Namespace: targetNamespace, URL: "http://higress-gateway." + targetNamespace + ".svc.cluster.local/mcp-servers/haowork-mcp"}
+		fixture.requireProbeTargetService(target)
+		if err := fixture.expectProbeDenied(source.namespace, podName, target, fixture.requireCrossZoneEgressDenyPolicy(source, target, podName)); err != nil {
+			fixture.t.Fatalf("BLOCKED_CROSS_NAMESPACE_RECEIPT_%s: %v", strings.ToUpper(source.name), err)
+		}
+	}
+}
+
+func (fixture *p005V122ClusterFixture) requireRestartKeepsOneReceiptAndOneTrace(topology agentteamsbridge.RuntimeTopology) {
+	fixture.t.Helper()
+	result := fixture.completeStructuredReceiptRun(topology, "restart", "RESTART")
+	fixture.restartCoreBridge()
+	fixture.requireRemoteCoreBridge()
+	after := fixture.startCoreBridge(result.mission, result.request)
+	if len(after.ExecutionReceiptIDs) != 1 || after.ExecutionReceiptIDs[0] != result.evidence.ExecutionReceiptIDs[0] {
+		fixture.t.Fatal("BLOCKED_HAOWORK_CORE_BRIDGE_RESTART: receipt changed or duplicated")
+	}
+	candidateTraceID := "TRC-" + strings.TrimPrefix(after.ExecutionReceiptIDs[0], "ERC-")
+	if p005V122Count(after.TraceIDs, candidateTraceID) != 1 {
+		fixture.t.Fatal("BLOCKED_HAOWORK_CORE_BRIDGE_RESTART: candidate trace changed or duplicated")
+	}
+	fixture.evidence.record(fixture.t, "restart", map[string]any{
+		"controller": "core_bridge", "start_new_state": "FRESH_RUN", "receipt_id": after.ExecutionReceiptIDs[0],
+	})
+}
+
+func (fixture *p005V122ClusterFixture) completeStructuredReceiptRun(topology agentteamsbridge.RuntimeTopology, suffix, kind string) p005V122StructuredRun {
+	fixture.t.Helper()
+	mission, request, assignmentID, report := fixture.structuredReceiptInput(topology, suffix, kind)
+	start := fixture.startCoreBridgeAsync(mission, request)
+	evidence := fixture.submitLeaderReceiptAndAwait(topology, assignmentID, report, start)
+	canonical := report
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	digest := sha256.Sum256(encoded)
+	return p005V122StructuredRun{mission: mission, request: request, assignmentID: assignmentID, report: report, reportSHA256: hex.EncodeToString(digest[:]), evidence: evidence}
+}
+
+func (fixture *p005V122ClusterFixture) structuredReceiptInput(topology agentteamsbridge.RuntimeTopology, suffix, kind string) (model.MissionEnvelope, executor.AgentTeamsStartRequest, string, executionreceipt.ExecutionReport) {
+	fixture.t.Helper()
+	missionConfig := fixture.missionConfigForPublicZone()
+	mission := fixture.missionEnvelopeForEnvironment(fixture.publicZone.name, missionConfig.missionID)
+	executionID := p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_EXECUTION_ID") + "-" + suffix
+	runID, err := p005V122GovernedRunID(kind, executionID)
+	if err != nil {
+		fixture.t.Fatalf("BLOCKED_CLUSTER_EXECUTION_ID: %v", err)
+	}
+	workItemID := "WORK-P005-V122-" + strings.ToUpper(suffix)
+	request := fixture.productionStartRequest(mission, topology, runID, workItemID)
+	assignmentID := p005V122AssignmentID(mission.ID, runID, workItemID)
+	missionDocument, err := json.Marshal(mission)
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	missionDigest := sha256.Sum256(missionDocument)
+	missionSHA256 := hex.EncodeToString(missionDigest[:])
+	artifactURI := "s3://" + fixture.managerArtifactBucket(fixture.publicZone) + "/environments/" + mission.EnvironmentID + "/missions/" + mission.ID + "/artifacts/" + missionSHA256
+	report := executionreceipt.ExecutionReport{
+		AssignmentID: assignmentID, Status: "succeeded", SummarySHA256: p005V122Digest("structured receipt " + suffix),
+		Artifacts: []executionreceipt.Artifact{{Kind: "mission", URI: artifactURI, SHA256: missionSHA256, EnvironmentID: mission.EnvironmentID, Size: int64(len(missionDocument))}},
+		Checks:    []executionreceipt.Check{{Name: "delivery-leader-completion", Status: "passed", EvidenceSHA256: p005V122Digest("check " + suffix)}},
+	}
+	return mission, request, assignmentID, report
+}
+
+func (fixture *p005V122ClusterFixture) submitLeaderReceiptAndAwait(topology agentteamsbridge.RuntimeTopology, assignmentID string, report executionreceipt.ExecutionReport, start <-chan p005V122CoreStartResult) corebridge.RunEvidence {
+	fixture.t.Helper()
+	if report.AssignmentID != assignmentID {
+		fixture.t.Fatal("BLOCKED_DELIVERY_LEADER_RECEIPT: report assignment does not match")
+	}
+	credential := fixture.workerGatewayCredential(topology.TeamName+"-delivery-leader", "BLOCKED_DELIVERY_LEADER_CREDENTIAL")
+	defer clear(credential)
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		result := fixture.callReceiptTool(credential, report)
+		if result.status == http.StatusOK && !result.isError {
+			if result.payload["assignment_id"] != assignmentID || result.payload["accepted_as_candidate"] != true {
+				fixture.t.Fatal("BLOCKED_DELIVERY_LEADER_RECEIPT: MCP response binding is invalid")
+			}
+			break
+		}
+		if result.status == http.StatusOK && result.code != "assignment_not_found" && result.code != "assignment_inactive" && result.code != "receipt_store_failed" {
+			fixture.t.Fatalf("BLOCKED_DELIVERY_LEADER_RECEIPT: MCP rejected receipt with code %q", result.code)
+		}
+		if time.Now().After(deadline) {
+			fixture.t.Fatalf("BLOCKED_DELIVERY_LEADER_RECEIPT: MCP receipt route did not become ready, status=%d code=%q", result.status, result.code)
+		}
+		time.Sleep(time.Second)
+	}
+	select {
+	case result := <-start:
+		if result.err != nil || result.status != http.StatusOK {
+			fixture.t.Fatalf("BLOCKED_DELIVERY_LEADER_RECEIPT: Core Bridge status=%d code=%q reason=%q err=%v", result.status, result.code, result.reason, result.err)
+		}
+		return result.evidence
+	case <-fixture.ctx.Done():
+		fixture.t.Fatalf("BLOCKED_DELIVERY_LEADER_RECEIPT: %v", fixture.ctx.Err())
+	}
+	return corebridge.RunEvidence{}
+}
+
 func (fixture *p005V122ClusterFixture) coreBridgeJSON(method, path string, input, output any) {
 	fixture.t.Helper()
-	readyURL := p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_CORE_BRIDGE_READY_URL")
+	status, code, reason, err := fixture.coreBridgeRequest(fixture.ctx, method, path, input, output)
+	if err != nil {
+		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: %v", err)
+	}
+	if status != http.StatusOK {
+		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: status=%d error=%s reason=%s", status, code, reason)
+	}
+}
+
+func (fixture *p005V122ClusterFixture) coreBridgeRequest(ctx context.Context, method, path string, input, output any) (int, string, string, error) {
+	readyURL := p005V122RequiredEnv(fixture.t, p005V122ZoneEnv(fixture.publicZone, "CORE_BRIDGE_READY_URL"))
 	base, err := url.Parse(readyURL)
 	if err != nil || base.Scheme != "http" || !isLoopbackForE2E(base.Hostname()) || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
-		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: ready URL must be loopback HTTP")
+		return 0, "", "", errors.New("ready URL must be loopback HTTP")
 	}
 	base.Path, base.RawPath, base.RawQuery, base.Fragment = path, "", "", ""
 	var body io.Reader
 	if input != nil {
 		encoded, marshalErr := json.Marshal(input)
 		if marshalErr != nil {
-			fixture.t.Fatal(marshalErr)
+			return 0, "", "", marshalErr
 		}
 		body = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequestWithContext(fixture.ctx, method, base.String(), body)
+	request, err := http.NewRequestWithContext(ctx, method, base.String(), body)
 	if err != nil {
-		fixture.t.Fatal(err)
+		return 0, "", "", err
 	}
-	request.Header.Set("Authorization", "Bearer "+p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_CORE_BRIDGE_TOKEN"))
+	request.Header.Set("Authorization", "Bearer "+p005V122RequiredEnv(fixture.t, p005V122ZoneEnv(fixture.publicZone, "CORE_BRIDGE_TOKEN")))
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
 	response, err := (&http.Client{Timeout: p005V122CoreBridgeClientTimeout}).Do(request)
 	if err != nil {
-		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: %v", err)
+		return 0, "", "", err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		var failure map[string]any
+		var failure map[string]string
 		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&failure)
-		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: status=%d error=%v reason=%v", response.StatusCode, failure["error"], failure["reason"])
+		return response.StatusCode, failure["error"], failure["reason"], nil
 	}
 	if output != nil {
 		decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(output); err != nil {
-			fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE_EVIDENCE: %v", err)
+			return response.StatusCode, "", "", err
 		}
 	}
+	return response.StatusCode, "", "", nil
 }
 
-func (fixture *p005V122ClusterFixture) configureMCPRuntimeBinding(topology agentteamsbridge.RuntimeTopology, bindingRevision int) {
+func (fixture *p005V122ClusterFixture) startCoreBridgeAsync(mission model.MissionEnvelope, request executor.AgentTeamsStartRequest) <-chan p005V122CoreStartResult {
 	fixture.t.Helper()
-	if bindingRevision < 1 {
-		fixture.t.Fatal("BLOCKED_MCP_RUNTIME_BINDING: Core Bridge did not return a persisted binding revision")
+	result := make(chan p005V122CoreStartResult, 1)
+	go func() {
+		deadline := time.Now().Add(2 * time.Minute)
+		for {
+			var evidence corebridge.RunEvidence
+			status, code, reason, err := fixture.coreBridgeRequest(fixture.ctx, http.MethodPost, "/v1/runs/start", corebridge.StartRequest{Mission: mission, Request: request}, &evidence)
+			if err != nil || status == http.StatusOK || code != "transport_start_failed" || time.Now().After(deadline) {
+				result <- p005V122CoreStartResult{evidence: evidence, status: status, code: code, reason: reason, err: err}
+				return
+			}
+			select {
+			case <-fixture.ctx.Done():
+				result <- p005V122CoreStartResult{err: fixture.ctx.Err()}
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}()
+	return result
+}
+
+func (fixture *p005V122ClusterFixture) workerGatewayCredential(workerName, blocker string) []byte {
+	fixture.t.Helper()
+	secretName := "agentteams-creds-" + strings.TrimSpace(workerName)
+	secret, err := fixture.kubernetes.CoreV1().Secrets(fixture.publicZone.namespace).Get(fixture.ctx, secretName, metav1.GetOptions{})
+	if err != nil || len(secret.Data["WORKER_GATEWAY_KEY"]) == 0 {
+		fixture.t.Fatalf("%s: AgentTeams credential is unavailable", blocker)
 	}
-	credentialSecret, err := fixture.kubernetes.CoreV1().Secrets(fixture.publicZone.namespace).Get(fixture.ctx, "agentteams-creds-default", metav1.GetOptions{})
-	if err != nil || len(credentialSecret.Data["WORKER_GATEWAY_KEY"]) == 0 {
-		fixture.t.Fatalf("BLOCKED_MCP_RUNTIME_BINDING: %v", err)
+	return append([]byte(nil), secret.Data["WORKER_GATEWAY_KEY"]...)
+}
+
+func (fixture *p005V122ClusterFixture) callReceiptTool(credential []byte, report executionreceipt.ExecutionReport) p005V122MCPResult {
+	fixture.t.Helper()
+	if len(credential) == 0 {
+		return p005V122MCPResult{code: "credential_unavailable"}
 	}
-	digest := sha256.Sum256(credentialSecret.Data["WORKER_GATEWAY_KEY"])
-	document := map[string]any{"bindings": []any{map[string]any{
-		"consumer_name": "manager", "credential_sha256": hex.EncodeToString(digest[:]),
-		"principal": map[string]any{"logical_actor_id": "AGT-P005-MANAGER", "runtime_principal_id": topology.ManagerPrincipalID, "environment_id": "public", "agentteams_instance_id": topology.TeamName, "binding_revision": bindingRevision},
-	}}}
-	encoded, err := json.Marshal(document)
+	gatewayURL := p005V122RequiredEnv(fixture.t, p005V122ZoneEnv(fixture.publicZone, "MCP_GATEWAY_URL"))
+	parsed, err := url.Parse(gatewayURL)
+	if err != nil || parsed.Scheme != "http" || !isLoopbackForE2E(parsed.Hostname()) || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		fixture.t.Fatal("BLOCKED_MCP_GATEWAY_URL")
+	}
+	payload := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
+		"name": "haowork.submit_execution_report", "arguments": report,
+	}}
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		fixture.t.Fatal(err)
 	}
-	secrets := fixture.kubernetes.CoreV1().Secrets(fixture.publicZone.namespace)
-	secret, err := secrets.Get(fixture.ctx, "haowork-mcp-runtime-bindings", metav1.GetOptions{})
+	request, err := http.NewRequestWithContext(fixture.ctx, http.MethodPost, parsed.String(), bytes.NewReader(encoded))
 	if err != nil {
-		fixture.t.Fatalf("BLOCKED_MCP_RUNTIME_BINDING: %v", err)
+		fixture.t.Fatal(err)
 	}
-	secret.Data = map[string][]byte{"bindings.json": encoded}
-	updatedSecret, err := secrets.Update(fixture.ctx, secret, metav1.UpdateOptions{})
+	request.Host = "aigw-local.agentteams.io"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+string(credential))
+	response, err := (&http.Client{Timeout: 35 * time.Second}).Do(request)
 	if err != nil {
-		fixture.t.Fatalf("BLOCKED_MCP_RUNTIME_BINDING: %v", err)
+		return p005V122MCPResult{code: "route_unavailable"}
 	}
-	deployments := fixture.kubernetes.AppsV1().Deployments(fixture.publicZone.namespace)
-	deployment, err := deployments.Get(fixture.ctx, "haowork-mcp", metav1.GetOptions{})
-	if err != nil {
-		fixture.t.Fatalf("BLOCKED_MCP_RUNTIME_BINDING: %v", err)
+	defer response.Body.Close()
+	var envelope struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+			IsError bool `json:"isError"`
+		} `json:"result"`
+		Error *struct {
+			Data map[string]string `json:"data"`
+		} `json:"error"`
 	}
-	if deployment.Spec.Template.Annotations == nil {
-		deployment.Spec.Template.Annotations = map[string]string{}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&envelope); err != nil {
+		return p005V122MCPResult{status: response.StatusCode, code: "invalid_response"}
 	}
-	annotations, annotationErr := p005V122BindingRolloutAnnotations(encoded, updatedSecret.ResourceVersion)
-	if annotationErr != nil {
-		fixture.t.Fatalf("BLOCKED_MCP_RUNTIME_BINDING: %v", annotationErr)
+	result := p005V122MCPResult{status: response.StatusCode, isError: envelope.Result.IsError}
+	if envelope.Error != nil {
+		result.isError = true
+		result.code = envelope.Error.Data["code"]
+		return result
 	}
-	for key, value := range annotations {
-		deployment.Spec.Template.Annotations[key] = value
+	if len(envelope.Result.Content) != 1 {
+		result.code = "invalid_response"
+		return result
 	}
-	updated, err := deployments.Update(fixture.ctx, deployment, metav1.UpdateOptions{})
-	if err != nil {
-		fixture.t.Fatalf("BLOCKED_MCP_RUNTIME_BINDING: %v", err)
+	if err := json.Unmarshal([]byte(envelope.Result.Content[0].Text), &result.payload); err != nil {
+		result.code = "invalid_response"
+		return result
 	}
-	deadline := time.Now().Add(2 * time.Minute)
-	for time.Now().Before(deadline) {
-		observed, getErr := deployments.Get(fixture.ctx, "haowork-mcp", metav1.GetOptions{})
-		if getErr == nil && observed.Status.ObservedGeneration >= updated.Generation && observed.Status.Replicas == 1 && observed.Status.UpdatedReplicas == 1 && observed.Status.ReadyReplicas == 1 && observed.Status.AvailableReplicas == 1 && observed.Status.UnavailableReplicas == 0 {
-			return
+	if result.isError {
+		if code, ok := result.payload["code"].(string); ok {
+			result.code = code
 		}
-		time.Sleep(time.Second)
 	}
-	fixture.t.Fatal("BLOCKED_MCP_RUNTIME_BINDING: MCP rollout did not become ready")
+	return result
+}
+
+func p005V122ManagerDeniedAtGateway(result p005V122MCPResult) bool {
+	return (result.status == http.StatusUnauthorized || result.status == http.StatusForbidden) &&
+		!result.isError && result.code == "invalid_response"
 }
 
 func p005V122BindingRolloutAnnotations(document []byte, resourceVersion string) (map[string]string, error) {
@@ -458,53 +789,6 @@ func p005V122BindingRolloutAnnotations(document []byte, resourceVersion string) 
 		"haowork.io/runtime-binding-sha256":           hex.EncodeToString(digest[:]),
 		"haowork.io/runtime-binding-resource-version": resourceVersion,
 	}, nil
-}
-
-func (fixture *p005V122ClusterFixture) callGovernedHistory(mission model.MissionEnvelope, run executor.AgentTeamsStartRequest, traceID string) {
-	fixture.t.Helper()
-	invocationID, err := p005V122GovernedInvocationID(p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_EXECUTION_ID"))
-	if err != nil {
-		fixture.t.Fatalf("BLOCKED_CLUSTER_EXECUTION_ID: %v", err)
-	}
-	secret, err := fixture.kubernetes.CoreV1().Secrets(fixture.publicZone.namespace).Get(fixture.ctx, "agentteams-creds-default", metav1.GetOptions{})
-	if err != nil || len(secret.Data["WORKER_GATEWAY_KEY"]) == 0 {
-		fixture.t.Fatalf("BLOCKED_MCP_GATEWAY_CREDENTIAL: %v", err)
-	}
-	gatewayURL := p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_MCP_GATEWAY_URL")
-	parsed, err := url.Parse(gatewayURL)
-	if err != nil || parsed.Scheme != "http" || !isLoopbackForE2E(parsed.Hostname()) || parsed.User != nil {
-		fixture.t.Fatal("BLOCKED_MCP_GATEWAY_URL")
-	}
-	payload := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
-		"name": "haowork.history", "arguments": map[string]any{"cursor": ""}, "meta": map[string]any{
-			"id": invocationID, "mission_id": mission.ID, "task_id": run.TaskID, "work_item_id": run.TaskID, "run_id": run.RunID, "trace_id": traceID,
-			"goal_version": mission.GoalVersion, "context_id": mission.ContextID, "context_hash": mission.ContextHash, "lease_id": mission.LeaseID, "scope": []string{"src/**"},
-		},
-	}}
-	encoded, _ := json.Marshal(payload)
-	request, err := http.NewRequestWithContext(fixture.ctx, http.MethodPost, parsed.String(), bytes.NewReader(encoded))
-	if err != nil {
-		fixture.t.Fatal(err)
-	}
-	request.Host = "aigw-local.agentteams.io"
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+string(secret.Data["WORKER_GATEWAY_KEY"]))
-	response, err := (&http.Client{Timeout: 90 * time.Second}).Do(request)
-	if err != nil {
-		fixture.t.Fatalf("BLOCKED_MCP_TOOLS_CALL: %v", err)
-	}
-	defer response.Body.Close()
-	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if readErr != nil {
-		fixture.t.Fatalf("BLOCKED_MCP_TOOLS_CALL: read response: %v", readErr)
-	}
-	var result struct {
-		Result json.RawMessage `json:"result"`
-		Error  json.RawMessage `json:"error"`
-	}
-	if response.StatusCode != http.StatusOK || json.Unmarshal(responseBody, &result) != nil || len(result.Error) != 0 || len(result.Result) == 0 {
-		fixture.t.Fatalf("BLOCKED_MCP_TOOLS_CALL: status=%d response=%s", response.StatusCode, string(responseBody))
-	}
 }
 
 func isLoopbackForE2E(host string) bool {
@@ -529,7 +813,7 @@ func (fixture *p005V122ClusterFixture) requireCrossNamespaceTrafficDenied() {
 		}
 		for _, target := range targets {
 			fixture.requireProbeTargetService(target)
-			policyVerified := fixture.requireCrossZoneEgressDenyPolicy(probe, target)
+			policyVerified := fixture.requireCrossZoneEgressDenyPolicy(probe, target, podName)
 			if err := fixture.expectProbeDenied(probe.namespace, podName, target, policyVerified); err != nil {
 				fixture.t.Fatalf("BLOCKED_CROSS_NAMESPACE_DENIAL_%s: component=%s err=%v", strings.ToUpper(probe.name), target.Component, err)
 			}
@@ -551,14 +835,22 @@ func p005V122UniqueRunningProbePod(pods []corev1.Pod) (string, error) {
 	return running[0], nil
 }
 
-func (fixture *p005V122ClusterFixture) requireCrossZoneEgressDenyPolicy(source p005V122Zone, target p005V122ProbeTarget) bool {
+func (fixture *p005V122ClusterFixture) requireCrossZoneEgressDenyPolicy(source p005V122Zone, target p005V122ProbeTarget, sourcePodName string) bool {
 	fixture.t.Helper()
 	policyName := "haowork-" + source.name + "-default-deny"
 	policy, err := fixture.kubernetes.NetworkingV1().NetworkPolicies(source.namespace).Get(fixture.ctx, policyName, metav1.GetOptions{})
 	if err != nil {
 		fixture.t.Fatalf("BLOCKED_NETWORK_POLICY_EVIDENCE: get %s/%s: %v", source.namespace, policyName, err)
 	}
-	if !p005V122PolicyDeniesOppositeNamespace(*policy, source.name, target.Namespace) {
+	sourcePod, err := fixture.kubernetes.CoreV1().Pods(source.namespace).Get(fixture.ctx, sourcePodName, metav1.GetOptions{})
+	if err != nil {
+		fixture.t.Fatalf("BLOCKED_NETWORK_POLICY_EVIDENCE: get source Pod %s/%s: %v", source.namespace, sourcePodName, err)
+	}
+	targetNamespace, err := fixture.kubernetes.CoreV1().Namespaces().Get(fixture.ctx, target.Namespace, metav1.GetOptions{})
+	if err != nil {
+		fixture.t.Fatalf("BLOCKED_NETWORK_POLICY_EVIDENCE: get target Namespace %s: %v", target.Namespace, err)
+	}
+	if !p005V122PolicyDeniesOppositeNamespace(*policy, sourcePod.Labels, targetNamespace.Labels) {
 		fixture.t.Fatalf("BLOCKED_NETWORK_POLICY_EVIDENCE: %s/%s does not prove egress denial to %s", source.namespace, policyName, target.Namespace)
 	}
 	return true
@@ -683,14 +975,22 @@ func (fixture *p005V122ClusterFixture) missionConfigForPublicZone() p005V122Miss
 }
 
 func (fixture *p005V122ClusterFixture) missionEnvelope(missionID string) model.MissionEnvelope {
+	return fixture.missionEnvelopeForEnvironment("public", missionID)
+}
+
+func (fixture *p005V122ClusterFixture) missionEnvelopeForEnvironment(environmentID, missionID string) model.MissionEnvelope {
 	fixture.t.Helper()
 	issuedAt := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
 	mission, err := model.CanonicalizeMissionEnvelope(model.MissionEnvelope{
 		ID: missionID, ProjectID: "PRJ-P005-V122", ContextID: "CTX-P005-V122", ContextHash: "cluster-e2e-context", LeaseID: "LSE-P005-V122", PolicyVersion: "P005-V122", GoalVersion: 1,
 		GovernanceTaskIDs: []string{"TASK-P005-V122"}, CompletionCriteria: []string{"verified cluster evidence"}, AllowedScopes: []string{"src/**"},
-		AllowedSkills:   []model.MissionSkillGrant{{Name: "history", Version: "1.0.0"}, {Name: "advisory", Version: "1.0.0"}, {Name: "patch", Version: "1.0.0"}, {Name: "audit", Version: "1.0.0"}},
+		AllowedSkills: []model.MissionSkillGrant{
+			{Name: "history", Version: "1.0.0"}, {Name: "advisory", Version: "1.0.0"},
+			{Name: "patch", Version: "1.0.0"}, {Name: "audit", Version: "1.0.0"},
+			{Name: "submit_execution_report", Version: "1.0.0"},
+		},
 		RoleAssignments: map[model.AgentFunction]string{model.FunctionManager: "AGT-P005-MANAGER", model.FunctionDeliveryLeader: "AGT-P005-LEADER", model.FunctionResearch: "AGT-P005-RESEARCH", model.FunctionBuild: "AGT-P005-BUILD", model.FunctionVerify: "AGT-P005-VERIFY"},
-		RiskLevel:       "L0", EnvironmentID: "public", IssuedAt: issuedAt, Deadline: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC),
+		RiskLevel:       "L0", EnvironmentID: environmentID, IssuedAt: issuedAt, Deadline: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		fixture.t.Fatalf("BLOCKED_MISSION_ENVELOPE: %v", err)
@@ -709,8 +1009,8 @@ func (fixture *p005V122ClusterFixture) requireRemoteCoreBridge() {
 	if err != nil || len(endpoints.Subsets) == 0 {
 		fixture.t.Fatalf("BLOCKED_HAOWORK_CORE_BRIDGE: service endpoints are unavailable: %v", err)
 	}
-	readyURL := p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_CORE_BRIDGE_READY_URL")
-	token := p005V122RequiredEnv(fixture.t, "HAOWORK_P005_CLUSTER_CORE_BRIDGE_TOKEN")
+	readyURL := p005V122RequiredEnv(fixture.t, p005V122ZoneEnv(fixture.publicZone, "CORE_BRIDGE_READY_URL"))
+	token := p005V122RequiredEnv(fixture.t, p005V122ZoneEnv(fixture.publicZone, "CORE_BRIDGE_TOKEN"))
 	deadline := time.Now().Add(45 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
@@ -930,6 +1230,175 @@ func p005V122GovernedInvocationID(executionID string) (string, error) {
 	return "INV-P005-V122-" + normalizedExecutionID, nil
 }
 
+func p005V122AssignmentID(missionID, runID, workItemID string) string {
+	digest := sha256.Sum256([]byte(strings.Join([]string{strings.TrimSpace(missionID), strings.TrimSpace(runID), strings.TrimSpace(workItemID)}, "\x00")))
+	return "ASN-" + hex.EncodeToString(digest[:16])
+}
+
+func p005V122Digest(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
+
+func p005V122Count(values []string, want string) int {
+	count := 0
+	for _, value := range values {
+		if value == want {
+			count++
+		}
+	}
+	return count
+}
+
+func (fixture *p005V122ClusterFixture) sendMatrixReply(topology agentteamsbridge.RuntimeTopology, runID, assignmentID string) {
+	fixture.t.Helper()
+	accessCredential := fixture.matrixLogin(topology.LeaderPrincipalID, "BLOCKED_MATRIX_REPLY_INJECTION")
+	defer clear(accessCredential)
+	txnID := "haowork-matrix-only-" + strings.TrimPrefix(assignmentID, "ASN-")
+	message := map[string]any{
+		"msgtype": "m.text", "body": "Execution finished without a structured receipt",
+		"org.haowork.assignment_id": assignmentID, "org.haowork.run_id": runID,
+	}
+	var sent struct {
+		EventID string `json:"event_id"`
+	}
+	path := "/_matrix/client/v3/rooms/" + url.PathEscape(topology.LeaderRoomID) + "/send/m.room.message/" + url.PathEscape(txnID)
+	fixture.matrixJSON(http.MethodPut, path, accessCredential, message, &sent, "BLOCKED_MATRIX_REPLY_INJECTION")
+	if !strings.HasPrefix(sent.EventID, "$") {
+		fixture.t.Fatal("BLOCKED_MATRIX_REPLY_INJECTION: Matrix returned no opaque event ID")
+	}
+}
+
+func (fixture *p005V122ClusterFixture) requireMatrixDispatchEvent(topology agentteamsbridge.RuntimeTopology, runID string) string {
+	fixture.t.Helper()
+	accessCredential := fixture.matrixLogin(topology.HumanPrincipalID, "BLOCKED_MATRIX_DISPATCH_EVIDENCE")
+	defer clear(accessCredential)
+	var messages struct {
+		Chunk []struct {
+			Type    string `json:"type"`
+			EventID string `json:"event_id"`
+			Content struct {
+				RunID string `json:"org.haowork.run_id"`
+			} `json:"content"`
+		} `json:"chunk"`
+	}
+	path := "/_matrix/client/v3/rooms/" + url.PathEscape(topology.LeaderRoomID) + "/messages?dir=b&limit=100"
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		messages.Chunk = nil
+		fixture.matrixJSON(http.MethodGet, path, accessCredential, nil, &messages, "BLOCKED_MATRIX_DISPATCH_EVIDENCE")
+		matches := make([]string, 0, 1)
+		for _, event := range messages.Chunk {
+			if event.Type == "m.room.message" && event.Content.RunID == runID && strings.HasPrefix(event.EventID, "$") {
+				matches = append(matches, event.EventID)
+			}
+		}
+		if len(matches) == 1 {
+			return matches[0]
+		}
+		if time.Now().After(deadline) {
+			fixture.t.Fatalf("BLOCKED_MATRIX_DISPATCH_EVIDENCE: expected one dispatch event, got %d", len(matches))
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func (fixture *p005V122ClusterFixture) matrixLogin(principalID, blocker string) []byte {
+	fixture.t.Helper()
+	secret, err := fixture.kubernetes.CoreV1().Secrets(fixture.publicZone.namespace).Get(fixture.ctx, fixture.publicZone.release+"-runtime-env", metav1.GetOptions{})
+	if err != nil || len(secret.Data["AGENTTEAMS_MATRIX_APPSERVICE_AS_TOKEN"]) == 0 {
+		fixture.t.Fatalf("%s: AppService credential is unavailable", blocker)
+	}
+	appServiceCredential := append([]byte(nil), secret.Data["AGENTTEAMS_MATRIX_APPSERVICE_AS_TOKEN"]...)
+	defer clear(appServiceCredential)
+	username, ok := p005V122MatrixUsername(principalID)
+	if !ok {
+		fixture.t.Fatalf("%s: Matrix principal is invalid", blocker)
+	}
+	var loginResult struct {
+		AccessToken string `json:"access_token"`
+		UserID      string `json:"user_id"`
+	}
+	login := map[string]any{"type": "m.login.application_service", "identifier": map[string]string{"type": "m.id.user", "user": username}}
+	fixture.matrixJSON(http.MethodPost, "/_matrix/client/v3/login", appServiceCredential, login, &loginResult, blocker)
+	if loginResult.UserID != principalID || strings.TrimSpace(loginResult.AccessToken) == "" {
+		fixture.t.Fatalf("%s: AppService login returned a different identity", blocker)
+	}
+	return []byte(loginResult.AccessToken)
+}
+
+func (fixture *p005V122ClusterFixture) matrixJSON(method, path string, credential []byte, input, output any, blocker string) {
+	fixture.t.Helper()
+	base, err := url.Parse(p005V122RequiredEnv(fixture.t, p005V122ZoneEnv(fixture.publicZone, "MATRIX_URL")))
+	if err != nil || base.Scheme != "http" || !isLoopbackForE2E(base.Hostname()) || base.User != nil || base.RawQuery != "" || base.Fragment != "" || !strings.HasPrefix(path, "/_matrix/client/v3/") {
+		fixture.t.Fatalf("%s: Matrix loopback endpoint is invalid", blocker)
+	}
+	relative, err := url.Parse(path)
+	if err != nil || relative.IsAbs() {
+		fixture.t.Fatalf("%s: Matrix request path is invalid", blocker)
+	}
+	endpoint := base.ResolveReference(relative)
+	var body io.Reader
+	if input != nil {
+		encoded, err := json.Marshal(input)
+		if err != nil {
+			fixture.t.Fatal(err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(fixture.ctx, method, endpoint.String(), body)
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+string(credential))
+	if input != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	if err != nil {
+		fixture.t.Fatalf("%s: Matrix request failed", blocker)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		fixture.t.Fatalf("%s: Matrix returned status %d", blocker, response.StatusCode)
+	}
+	if output != nil {
+		if err := p005V122DecodeMatrixJSON(response.Body, output); err != nil {
+			fixture.t.Fatalf("%s: Matrix response is invalid", blocker)
+		}
+	}
+}
+
+func p005V122DecodeMatrixJSON(reader io.Reader, output any) error {
+	if reader == nil || output == nil {
+		return errors.New("Matrix response reader and output are required")
+	}
+	decoder := json.NewDecoder(io.LimitReader(reader, 1<<20))
+	if err := decoder.Decode(output); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("Matrix response contains trailing JSON")
+		}
+		return err
+	}
+	return nil
+}
+
+func p005V122MatrixUsername(principalID string) (string, bool) {
+	principalID = strings.TrimSpace(principalID)
+	if !strings.HasPrefix(principalID, "@") {
+		return "", false
+	}
+	separator := strings.IndexByte(principalID, ':')
+	if separator <= 1 || separator == len(principalID)-1 {
+		return "", false
+	}
+	return principalID[1:separator], true
+}
+
 func p005V122ClassifyProbeResult(runErr error, stderr string, policyVerified bool) error {
 	if runErr == nil {
 		return errors.New("cross-namespace request unexpectedly succeeded")
@@ -955,12 +1424,12 @@ func p005V122ClassifyProbeResult(runErr error, stderr string, policyVerified boo
 	return fmt.Errorf("probe failed for a non-isolation reason: %s", runErr)
 }
 
-func p005V122PolicyDeniesOppositeNamespace(policy networkingv1.NetworkPolicy, sourceZone, targetNamespace string) bool {
-	if policy.Spec.PodSelector.Size() != 0 || !p005V122ContainsNetworkPolicyType(policy.Spec.PolicyTypes, networkingv1.PolicyTypeEgress) {
+func p005V122PolicyDeniesOppositeNamespace(policy networkingv1.NetworkPolicy, sourcePodLabels, targetNamespaceLabels map[string]string) bool {
+	if !p005V122ContainsNetworkPolicyType(policy.Spec.PolicyTypes, networkingv1.PolicyTypeEgress) {
 		return false
 	}
-	targetZone := strings.TrimPrefix(targetNamespace, "haowork-")
-	if targetZone == "" || targetZone == sourceZone {
+	sourceSelector, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)
+	if err != nil || !sourceSelector.Matches(labels.Set(sourcePodLabels)) || len(targetNamespaceLabels) == 0 {
 		return false
 	}
 	for _, rule := range policy.Spec.Egress {
@@ -968,16 +1437,21 @@ func p005V122PolicyDeniesOppositeNamespace(policy networkingv1.NetworkPolicy, so
 			return false
 		}
 		for _, peer := range rule.To {
-			if peer.IPBlock != nil || peer.NamespaceSelector == nil {
-				continue
-			}
-			if peer.NamespaceSelector.MatchLabels["haowork.io/zone"] == targetZone {
+			if peer.IPBlock != nil {
 				return false
 			}
-			for _, expression := range peer.NamespaceSelector.MatchExpressions {
-				if expression.Key == "haowork.io/zone" && (expression.Operator != metav1.LabelSelectorOpNotIn || !p005V122Contains(expression.Values, targetZone)) {
+			if peer.NamespaceSelector == nil {
+				if peer.PodSelector == nil {
 					return false
 				}
+				continue
+			}
+			targetSelector, err := metav1.LabelSelectorAsSelector(peer.NamespaceSelector)
+			if err != nil {
+				return false
+			}
+			if targetSelector.Matches(labels.Set(targetNamespaceLabels)) {
+				return false
 			}
 		}
 	}

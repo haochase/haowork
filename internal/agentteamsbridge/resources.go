@@ -59,7 +59,7 @@ func mcpGrant(envelope model.MissionEnvelope, function model.AgentFunction) map[
 func roleSkillAllowlist(function model.AgentFunction) map[string]bool {
 	switch function {
 	case model.FunctionDeliveryLeader:
-		return map[string]bool{"plan": true, "context": true, "record": true, "history": true}
+		return map[string]bool{"plan": true, "context": true, "record": true, "history": true, "submit_execution_report": true}
 	case model.FunctionResearch:
 		return map[string]bool{"context": true, "history": true, "advisory": true, "mirror": true}
 	case model.FunctionBuild:

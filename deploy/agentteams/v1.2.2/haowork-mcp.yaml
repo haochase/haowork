@@ -24,6 +24,8 @@ metadata:
     app.kubernetes.io/component: governance-mcp
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: haowork-mcp
@@ -51,7 +53,7 @@ spec:
             - name: HAOWORK_MCP_SKILLS_DIR
               value: /opt/haowork/skills
             - name: HAOWORK_MCP_BINDINGS_FILE
-              value: /var/run/secrets/haowork-mcp/bindings.json
+              value: /var/lib/haowork/bindings/mcp-bindings.json
             - name: HAOWORK_MCP_USE_CORE_BRIDGE_STATE
               value: "true"
             - name: HAOWORK_MCP_ROUTE_PATH
@@ -89,17 +91,13 @@ spec:
             - name: governance-state
               mountPath: /var/lib/haowork/project
               readOnly: false
-            - name: runtime-consumer-bindings
-              mountPath: /var/run/secrets/haowork-mcp
+            - name: runtime-bindings
+              mountPath: /var/lib/haowork/bindings
               readOnly: true
       volumes:
         - name: governance-state
           persistentVolumeClaim:
             claimName: haowork-governance-state
-        - name: runtime-consumer-bindings
-          secret:
-            secretName: haowork-mcp-runtime-bindings
-            defaultMode: 256
-            items:
-              - key: bindings.json
-                path: bindings.json
+        - name: runtime-bindings
+          persistentVolumeClaim:
+            claimName: haowork-runtime-bindings

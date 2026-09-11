@@ -64,7 +64,7 @@ func TestKubernetesHumanMatrixClientLogsInAsBoundHuman(t *testing.T) {
 	if err := client.BindHuman(context.Background(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Send(context.Background(), "!manager:matrix.test", agentteamsbridge.MatrixOutbound{MissionID: "MSN-1", RunID: "RUN-1", WorkItemID: "WORK-1", WorkspaceDigest: strings.Repeat("a", 64)}); err != nil {
+	if _, err := client.Send(context.Background(), "!manager:matrix.test", agentteamsbridge.MatrixOutbound{AssignmentID: "ASN-1", MissionID: "MSN-1", RunID: "RUN-1", WorkItemID: "WORK-1", WorkspaceDigest: strings.Repeat("a", 64)}); err != nil {
 		t.Fatal(err)
 	}
 	if !loginSeen || !sendSeen {

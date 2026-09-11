@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/haochase/haowork/internal/agentteamsbridge"
+	"github.com/haochase/haowork/internal/model"
 )
 
 func TestMatrixV3LoginAndSendUseOfficialEndpoints(t *testing.T) {
@@ -56,12 +57,16 @@ func TestMatrixV3LoginAndSendUseOfficialEndpoints(t *testing.T) {
 				t.Fatalf("send artifact evidence = %#v", body["org.haowork.artifacts"])
 			}
 			artifact, ok := artifacts[0].(map[string]any)
-			if !ok || artifact["uri"] != "environments/public/missions/MSN-001/artifacts/abc" || artifact["sha256"] != strings.Repeat("a", 64) || artifact["environmentID"] != "public" || artifact["size"] != float64(42) {
+			if !ok || artifact["uri"] != "s3://haowork-public-artifacts/environments/public/missions/MSN-001/artifacts/abc" || artifact["sha256"] != strings.Repeat("a", 64) || artifact["environmentID"] != "public" || artifact["size"] != float64(42) {
 				t.Fatalf("send artifact evidence = %#v", artifact)
 			}
-			correlationID := agentteamsbridge.MatrixTransactionID(agentteamsbridge.MatrixOutbound{MissionID: "MSN-001", RunID: "RUN-001", WorkItemID: "WKI-001", ArtifactRef: "environments/public/missions/MSN-001/artifacts/abc"})
 			message, _ := body["body"].(string)
-			if body["msgtype"] != "m.text" || !strings.HasPrefix(message, "HAOWORK_CORRELATION_ID: "+correlationID+"\n") || !strings.Contains(message, "Repeat the correlation line exactly") || body["org.haowork.mission_id"] != "MSN-001" || body["org.haowork.artifact_ref"] != "environments/public/missions/MSN-001/artifacts/abc" {
+			for _, required := range []string{"ASN-001", "s3://haowork-public-artifacts/environments/public/missions/MSN-001/artifacts/abc", "haowork.submit_execution_report", "assignment_id", "status", "summary_sha256", "artifacts", "checks"} {
+				if !strings.Contains(message, required) {
+					t.Fatalf("m.text body omits %q: %q", required, message)
+				}
+			}
+			if body["msgtype"] != "m.text" || strings.Contains(message, "Repeat the correlation") || body["org.haowork.assignment_id"] != "ASN-001" || body["org.haowork.mission_id"] != "MSN-001" || body["org.haowork.artifact_ref"] != "s3://haowork-public-artifacts/environments/public/missions/MSN-001/artifacts/abc" {
 				t.Fatalf("send body = %#v", body)
 			}
 			_, _ = response.Write([]byte(`{"event_id":"$event-001"}`))
@@ -84,9 +89,10 @@ func TestMatrixV3LoginAndSendUseOfficialEndpoints(t *testing.T) {
 	if err != nil || len(rooms) != 1 || rooms[0] != "!leader:matrix.test" {
 		t.Fatalf("joined rooms = %#v, err=%v", rooms, err)
 	}
-	if err := client.Send(context.Background(), "!leader:matrix.test", agentteamsbridge.MatrixOutbound{
-		MissionID: "MSN-001", RunID: "RUN-001", WorkItemID: "WKI-001", WorkspaceDigest: strings.Repeat("b", 64), ArtifactRef: "environments/public/missions/MSN-001/artifacts/abc",
-		Artifact: agentteamsbridge.MatrixArtifact{URI: "environments/public/missions/MSN-001/artifacts/abc", SHA256: strings.Repeat("a", 64), EnvironmentID: "public", Size: 42},
+	if _, err := client.Send(context.Background(), "!leader:matrix.test", agentteamsbridge.MatrixOutbound{
+		AssignmentID: "ASN-001", MissionID: "MSN-001", RunID: "RUN-001", WorkItemID: "WKI-001", WorkspaceDigest: strings.Repeat("b", 64), ArtifactRef: "s3://haowork-public-artifacts/environments/public/missions/MSN-001/artifacts/abc",
+		Artifact:      agentteamsbridge.MatrixArtifact{URI: "s3://haowork-public-artifacts/environments/public/missions/MSN-001/artifacts/abc", SHA256: strings.Repeat("a", 64), EnvironmentID: "public", Size: 42},
+		AllowedSkills: []model.MissionSkillGrant{{Name: "submit_execution_report", Version: "1.0.0"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +300,7 @@ func TestMatrixWriteDoesNotFollowRedirectOrRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Send(context.Background(), "!leader:test", agentteamsbridge.MatrixOutbound{MissionID: "MSN-001", RunID: "RUN-001", WorkItemID: "WKI-001", WorkspaceDigest: strings.Repeat("a", 64)}); err == nil {
+	if _, err := client.Send(context.Background(), "!leader:test", agentteamsbridge.MatrixOutbound{AssignmentID: "ASN-001", MissionID: "MSN-001", RunID: "RUN-001", WorkItemID: "WKI-001", WorkspaceDigest: strings.Repeat("a", 64)}); err == nil {
 		t.Fatal("Matrix Send followed a redirect")
 	}
 	if calls != 1 {
@@ -351,8 +357,8 @@ func TestMatrixV3SelectsObservedLeaderRoomAndCarriesWorkspaceDigest(t *testing.T
 		t.Fatal(err)
 	}
 	digest := strings.Repeat("a", 64)
-	if err := client.Send(context.Background(), "!leader:example", agentteamsbridge.MatrixOutbound{
-		MissionID: "MSN-1", RunID: "RUN-1", WorkItemID: "WORK-1", WorkspaceDigest: digest,
+	if _, err := client.Send(context.Background(), "!leader:example", agentteamsbridge.MatrixOutbound{
+		AssignmentID: "ASN-1", MissionID: "MSN-1", RunID: "RUN-1", WorkItemID: "WORK-1", WorkspaceDigest: digest,
 	}); err != nil {
 		t.Fatal(err)
 	}

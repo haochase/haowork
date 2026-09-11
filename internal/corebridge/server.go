@@ -1,6 +1,7 @@
 package corebridge
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -9,8 +10,10 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/haochase/haowork/internal/executionreceipt"
 	"github.com/haochase/haowork/internal/executor"
 	"github.com/haochase/haowork/internal/model"
 )
@@ -37,6 +40,14 @@ type Server struct {
 	runTimeout  time.Duration
 	maxBodySize int64
 	reportError func(string, error)
+	runMu       sync.Mutex
+	inflight    map[string]*runReservation
+}
+
+type runReservation struct {
+	request       executor.AgentTeamsStartRequest
+	missionDigest string
+	done          chan struct{}
 }
 
 type StartRequest struct {
@@ -49,6 +60,7 @@ type RunEvidence struct {
 	RuntimeBindingRevision int           `json:"runtime_binding_revision"`
 	Cursor                 string        `json:"cursor"`
 	SourceEventIDs         []string      `json:"source_event_ids"`
+	ExecutionReceiptIDs    []string      `json:"execution_receipt_ids"`
 	CoreHistorySHA256      string        `json:"core_history_sha256"`
 	TraceSHA256            string        `json:"trace_sha256"`
 	TraceIDs               []string      `json:"trace_ids"`
@@ -63,6 +75,16 @@ type RunArtifact struct {
 	Size          int64  `json:"size"`
 }
 
+type CandidateTraceExistence struct {
+	RunID                string `json:"run_id"`
+	CandidateTraceExists bool   `json:"candidate_trace_exists"`
+}
+
+type ReceiptExistence struct {
+	AssignmentID  string `json:"assignment_id"`
+	ReceiptExists bool   `json:"receipt_exists"`
+}
+
 func NewServer(config Config) (*Server, error) {
 	if strings.TrimSpace(config.Token) == "" || config.State == nil || config.Factory == nil {
 		return nil, errors.New("Core Bridge token, state, and production transport factory are required")
@@ -73,7 +95,7 @@ func NewServer(config Config) (*Server, error) {
 	if config.MaxBodySize <= 0 {
 		config.MaxBodySize = 1 << 20
 	}
-	return &Server{token: config.Token, state: config.State, factory: config.Factory, runTimeout: config.RunTimeout, maxBodySize: config.MaxBodySize, reportError: config.ReportError}, nil
+	return &Server{token: config.Token, state: config.State, factory: config.Factory, runTimeout: config.RunTimeout, maxBodySize: config.MaxBodySize, reportError: config.ReportError, inflight: make(map[string]*runReservation)}, nil
 }
 
 func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -91,12 +113,42 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		server.start(response, request)
 	case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/v1/runs/") && strings.HasSuffix(request.URL.Path, "/evidence"):
 		runID := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/v1/runs/"), "/evidence")
+		if request.URL.RawPath != "" || ValidateRunID(runID) != nil {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_run_id"})
+			return
+		}
 		evidence, err := server.state.Evidence(request.Context(), runID)
 		if err != nil {
 			writeJSON(response, http.StatusNotFound, map[string]string{"error": "evidence_not_found"})
 			return
 		}
 		writeJSON(response, http.StatusOK, evidence)
+	case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/v1/runs/") && strings.HasSuffix(request.URL.Path, "/candidate-trace-existence"):
+		runID := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/v1/runs/"), "/candidate-trace-existence")
+		if request.URL.RawPath != "" || ValidateRunID(runID) != nil {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_run_id"})
+			return
+		}
+		exists, err := server.state.CandidateTraceExists(request.Context(), runID)
+		if err != nil {
+			server.report("candidate_trace_read", err)
+			writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "trace_read_failed"})
+			return
+		}
+		writeJSON(response, http.StatusOK, CandidateTraceExistence{RunID: runID, CandidateTraceExists: exists})
+	case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/v1/assignments/") && strings.HasSuffix(request.URL.Path, "/receipt-existence"):
+		assignmentID := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/v1/assignments/"), "/receipt-existence")
+		if request.URL.RawPath != "" || !executionreceipt.ValidAssignmentID(assignmentID) {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_assignment_id"})
+			return
+		}
+		exists, err := server.state.ReceiptExists(request.Context(), assignmentID)
+		if err != nil {
+			server.report("receipt_read", err)
+			writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "receipt_read_failed"})
+			return
+		}
+		writeJSON(response, http.StatusOK, ReceiptExistence{AssignmentID: assignmentID, ReceiptExists: exists})
 	default:
 		writeJSON(response, http.StatusNotFound, map[string]string{"error": "not_found"})
 	}
@@ -104,7 +156,16 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 
 func (server *Server) start(response http.ResponseWriter, request *http.Request) {
 	var input StartRequest
-	decoder := json.NewDecoder(io.LimitReader(request.Body, server.maxBodySize+1))
+	content, err := io.ReadAll(io.LimitReader(request.Body, server.maxBodySize+1))
+	if err != nil {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	if int64(len(content)) > server.maxBodySize {
+		writeJSON(response, http.StatusRequestEntityTooLarge, map[string]string{"error": "request_too_large"})
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil {
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
@@ -115,22 +176,61 @@ func (server *Server) start(response http.ResponseWriter, request *http.Request)
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
-	if input.Request.MissionID != input.Mission.ID || input.Request.RunID == "" || input.Request.WorkItemID == "" {
+	if err := ValidateRunID(input.Request.RunID); err != nil {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_run_id"})
+		return
+	}
+	if input.Request.MissionID != input.Mission.ID || input.Request.WorkItemID == "" {
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "binding_mismatch"})
 		return
 	}
-	if err := server.state.RegisterMission(request.Context(), input.Mission); err != nil {
+	missionDigest, err := canonicalMissionDigest(input.Mission)
+	if err != nil {
 		writeJSON(response, http.StatusConflict, map[string]string{"error": "mission_rejected"})
 		return
 	}
-	if previous, exists := server.state.RunRequest(input.Request.RunID); exists && reflect.DeepEqual(previous, input.Request) {
+	requireNew, err := parseRequireNew(request.Header.Values("X-Haowork-Require-New"))
+	if err != nil {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	reservation, status := server.reserveRun(request.Context(), input.Request, missionDigest, requireNew)
+	switch status {
+	case runReservationAlreadyExists:
+		writeJSON(response, http.StatusConflict, map[string]string{"error": "run_already_exists"})
+		return
+	case runReservationConflict:
+		writeJSON(response, http.StatusConflict, map[string]string{"error": "run_conflict"})
+		return
+	case runReservationCanceled:
+		writeJSON(response, http.StatusRequestTimeout, map[string]string{"error": "run_wait_canceled"})
+		return
+	}
+	defer server.releaseRun(input.Request.RunID, reservation)
+	if previous, exists := server.state.RunRequest(input.Request.RunID); exists {
+		if !sameImmutableStartRequest(previous, input.Request) {
+			writeJSON(response, http.StatusConflict, map[string]string{"error": "run_conflict"})
+			return
+		}
+		if err := server.state.RegisterMission(request.Context(), input.Mission); err != nil {
+			writeJSON(response, http.StatusConflict, map[string]string{"error": "mission_rejected"})
+			return
+		}
 		evidence, evidenceErr := server.state.Evidence(request.Context(), input.Request.RunID)
 		if evidenceErr != nil {
+			if errors.Is(evidenceErr, ErrLegacyRunEvidence) {
+				writeJSON(response, http.StatusConflict, map[string]string{"error": "run_upgrade_required"})
+				return
+			}
 			server.report("existing_run_evidence", evidenceErr)
 			writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "evidence_read_failed"})
 			return
 		}
 		writeJSON(response, http.StatusOK, evidence)
+		return
+	}
+	if err := server.state.RegisterMission(request.Context(), input.Mission); err != nil {
+		writeJSON(response, http.StatusConflict, map[string]string{"error": "mission_rejected"})
 		return
 	}
 	starter, err := server.factory(input.Mission)
@@ -149,7 +249,7 @@ func (server *Server) start(response http.ResponseWriter, request *http.Request)
 	}
 	if bound, ok := session.(executor.BoundAgentTeamsSession); ok {
 		boundRequest := bound.BoundRequest()
-		if boundRequest.RunID != input.Request.RunID || boundRequest.MissionID != input.Request.MissionID || boundRequest.LogicalActorID != input.Request.LogicalActorID || boundRequest.RuntimeBindingRevision < 1 {
+		if !validBoundRequest(input.Request, boundRequest) {
 			_ = session.Cancel(context.Background())
 			writeJSON(response, http.StatusBadGateway, map[string]string{"error": "bound_request_invalid"})
 			return
@@ -158,13 +258,15 @@ func (server *Server) start(response http.ResponseWriter, request *http.Request)
 	}
 	cursor := server.state.Cursor(input.Request.RunID)
 	var eventIDs []string
+	var receiptIDs []string
 	for event := range session.Events(runContext, cursor) {
-		if event.RunID != input.Request.RunID || event.SourceEventID == "" || event.WorkspaceDigest == "" {
+		if event.RunID != input.Request.RunID || event.Kind != "execution_receipt" || event.SourceEventID == "" || event.WorkspaceDigest == "" {
 			_ = session.Cancel(context.Background())
 			writeJSON(response, http.StatusBadGateway, map[string]string{"error": "event_binding_failed"})
 			return
 		}
 		eventIDs = append(eventIDs, event.SourceEventID)
+		receiptIDs = append(receiptIDs, event.SourceEventID)
 		if event.AdapterCursor != "" {
 			cursor = event.AdapterCursor
 		}
@@ -193,7 +295,11 @@ func (server *Server) start(response http.ResponseWriter, request *http.Request)
 		writeJSON(response, http.StatusGatewayTimeout, map[string]string{"error": "no_governed_event"})
 		return
 	}
-	if err := server.state.RecordRun(input.Request, eventIDs, cursor); err != nil {
+	if len(receiptIDs) != 1 {
+		writeJSON(response, http.StatusBadGateway, map[string]string{"error": "event_binding_failed"})
+		return
+	}
+	if err := server.state.RecordRun(input.Request, eventIDs, receiptIDs, cursor); err != nil {
 		writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "evidence_persist_failed"})
 		return
 	}
@@ -205,10 +311,107 @@ func (server *Server) start(response http.ResponseWriter, request *http.Request)
 	writeJSON(response, http.StatusOK, evidence)
 }
 
+func parseRequireNew(values []string) (bool, error) {
+	if len(values) == 0 {
+		return false, nil
+	}
+	if len(values) != 1 {
+		return false, errors.New("ambiguous require-new header")
+	}
+	switch values[0] {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, errors.New("invalid require-new header")
+	}
+}
+
+type runReservationStatus int
+
+const (
+	runReservationOwned runReservationStatus = iota
+	runReservationAlreadyExists
+	runReservationConflict
+	runReservationCanceled
+)
+
+func (server *Server) reserveRun(ctx context.Context, request executor.AgentTeamsStartRequest, missionDigest string, requireNew bool) (*runReservation, runReservationStatus) {
+	for {
+		server.runMu.Lock()
+		active, exists := server.inflight[request.RunID]
+		if requireNew {
+			_, persisted := server.state.RunRequest(request.RunID)
+			if persisted || exists {
+				server.runMu.Unlock()
+				return nil, runReservationAlreadyExists
+			}
+			reservation := &runReservation{request: request, missionDigest: missionDigest, done: make(chan struct{})}
+			server.inflight[request.RunID] = reservation
+			server.runMu.Unlock()
+			return reservation, runReservationOwned
+		}
+		if !exists {
+			reservation := &runReservation{request: request, missionDigest: missionDigest, done: make(chan struct{})}
+			server.inflight[request.RunID] = reservation
+			server.runMu.Unlock()
+			return reservation, runReservationOwned
+		}
+		if active.missionDigest != missionDigest || !sameImmutableStartRequest(active.request, request) {
+			server.runMu.Unlock()
+			return nil, runReservationConflict
+		}
+		done := active.done
+		server.runMu.Unlock()
+		select {
+		case <-done:
+			continue
+		case <-ctx.Done():
+			return nil, runReservationCanceled
+		}
+	}
+}
+
+func canonicalMissionDigest(mission model.MissionEnvelope) (string, error) {
+	canonical, err := model.CanonicalizeMissionEnvelope(mission)
+	if err != nil || strings.TrimSpace(mission.Hash) == "" || mission.Hash != canonical.Hash {
+		return "", errors.New("Mission canonical hash is invalid")
+	}
+	return canonical.Hash, nil
+}
+
+func (server *Server) releaseRun(runID string, reservation *runReservation) {
+	server.runMu.Lock()
+	if server.inflight[runID] == reservation {
+		delete(server.inflight, runID)
+		close(reservation.done)
+	}
+	server.runMu.Unlock()
+}
+
+func sameImmutableStartRequest(left, right executor.AgentTeamsStartRequest) bool {
+	left.RuntimePrincipalID = ""
+	left.RuntimeBindingRevision = 0
+	right.RuntimePrincipalID = ""
+	right.RuntimeBindingRevision = 0
+	return reflect.DeepEqual(left, right)
+}
+
+func validBoundRequest(original, bound executor.AgentTeamsStartRequest) bool {
+	if strings.TrimSpace(bound.RuntimePrincipalID) == "" || bound.RuntimeBindingRevision < 1 {
+		return false
+	}
+	expected := original
+	expected.RuntimePrincipalID = bound.RuntimePrincipalID
+	expected.RuntimeBindingRevision = bound.RuntimeBindingRevision
+	return reflect.DeepEqual(expected, bound)
+}
+
 func safeSessionFailureCode(err error) string {
 	if coded, ok := err.(interface{ SafeCode() string }); ok {
 		switch coded.SafeCode() {
-		case "matrix_leader_event_unmatched", "matrix_leader_response_missing":
+		case "matrix_leader_event_unmatched", "matrix_leader_response_missing", "execution_report_missing", "execution_report_invalid":
 			return coded.SafeCode()
 		}
 	}

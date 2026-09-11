@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/haochase/haowork/internal/agentteamsbinding"
 )
 
 const defaultHostReadHeaderTimeout = 5 * time.Second
@@ -33,6 +34,40 @@ type RuntimeConsumerBinding struct {
 // request arguments and arbitrary request headers never contribute identity.
 type RuntimeConsumerAuthenticator struct {
 	bindings []runtimeConsumerBinding
+}
+
+// FileRuntimeConsumerAuthenticator reloads the credential-free binding file
+// for every request so controller updates and revocations take effect without
+// restarting the MCP Pod.
+type FileRuntimeConsumerAuthenticator struct {
+	path  string
+	clock func() time.Time
+}
+
+func NewFileRuntimeConsumerAuthenticator(path string) (*FileRuntimeConsumerAuthenticator, error) {
+	return NewFileRuntimeConsumerAuthenticatorWithClock(path, func() time.Time { return time.Now().UTC() })
+}
+
+func NewFileRuntimeConsumerAuthenticatorWithClock(path string, clock func() time.Time) (*FileRuntimeConsumerAuthenticator, error) {
+	path = strings.TrimSpace(path)
+	if path == "" || clock == nil {
+		return nil, errors.New("runtime consumer binding document path is required")
+	}
+	if _, err := LoadRuntimeConsumerAuthenticatorAt(path, clock().UTC()); err != nil {
+		return nil, err
+	}
+	return &FileRuntimeConsumerAuthenticator{path: path, clock: clock}, nil
+}
+
+func (authenticator *FileRuntimeConsumerAuthenticator) Authenticate(ctx context.Context, request *http.Request) (RuntimePrincipal, error) {
+	if authenticator == nil || authenticator.path == "" || authenticator.clock == nil {
+		return RuntimePrincipal{}, ErrUnauthenticated
+	}
+	current, err := LoadRuntimeConsumerAuthenticatorAt(authenticator.path, authenticator.clock().UTC())
+	if err != nil {
+		return RuntimePrincipal{}, ErrUnauthenticated
+	}
+	return current.Authenticate(ctx, request)
 }
 
 type runtimeConsumerBinding struct {
@@ -104,18 +139,17 @@ func (authenticator *RuntimeConsumerAuthenticator) Authenticate(_ context.Contex
 // MCP host. The schema is deliberately strict so an accidental plaintext key
 // field cannot silently become part of the deployment contract.
 func ParseRuntimeConsumerAuthenticator(input io.Reader) (*RuntimeConsumerAuthenticator, error) {
-	if input == nil {
-		return nil, errors.New("runtime consumer binding document is required")
+	return ParseRuntimeConsumerAuthenticatorAt(input, time.Now().UTC())
+}
+
+func ParseRuntimeConsumerAuthenticatorAt(input io.Reader, now time.Time) (*RuntimeConsumerAuthenticator, error) {
+	document, err := agentteamsbinding.DecodeBindingDocument(input)
+	if err != nil {
+		return nil, err
 	}
-	var document runtimeConsumerBindingDocument
-	decoder := json.NewDecoder(io.LimitReader(input, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&document); err != nil {
-		return nil, errors.New("invalid runtime consumer binding document")
-	}
-	var extra struct{}
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("runtime consumer binding document must contain one JSON value")
+	document, err = agentteamsbinding.NormalizeBindingDocument(document, now.UTC(), agentteamsbinding.RejectExpiredBindings)
+	if err != nil || len(document.Bindings) == 0 {
+		return nil, errors.New("runtime consumer binding document has no active binding")
 	}
 	bindings := make([]RuntimeConsumerBinding, 0, len(document.Bindings))
 	for _, binding := range document.Bindings {
@@ -137,28 +171,16 @@ func ParseRuntimeConsumerAuthenticator(input io.Reader) (*RuntimeConsumerAuthent
 // LoadRuntimeConsumerAuthenticator opens a mounted Secret document without
 // including its path contents or credentials in an error message.
 func LoadRuntimeConsumerAuthenticator(path string) (*RuntimeConsumerAuthenticator, error) {
+	return LoadRuntimeConsumerAuthenticatorAt(path, time.Now().UTC())
+}
+
+func LoadRuntimeConsumerAuthenticatorAt(path string, now time.Time) (*RuntimeConsumerAuthenticator, error) {
 	file, err := os.Open(strings.TrimSpace(path))
 	if err != nil {
 		return nil, errors.New("runtime consumer binding document is unavailable")
 	}
 	defer file.Close()
-	return ParseRuntimeConsumerAuthenticator(file)
-}
-
-type runtimeConsumerBindingDocument struct {
-	Bindings []struct {
-		ConsumerName     string                   `json:"consumer_name"`
-		CredentialSHA256 string                   `json:"credential_sha256"`
-		Principal        runtimePrincipalDocument `json:"principal"`
-	} `json:"bindings"`
-}
-
-type runtimePrincipalDocument struct {
-	LogicalActorID       string `json:"logical_actor_id"`
-	RuntimePrincipalID   string `json:"runtime_principal_id"`
-	EnvironmentID        string `json:"environment_id"`
-	AgentTeamsInstanceID string `json:"agentteams_instance_id"`
-	BindingRevision      int    `json:"binding_revision"`
+	return ParseRuntimeConsumerAuthenticatorAt(file, now)
 }
 
 func decodeCredentialDigest(value string) ([]byte, error) {

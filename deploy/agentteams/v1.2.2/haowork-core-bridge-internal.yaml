@@ -113,6 +113,8 @@ metadata:
     haowork.io/zone: internal
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: haowork-core-bridge
@@ -192,7 +194,7 @@ spec:
             - name: HAOWORK_CORE_MCP_SERVER_NAME
               value: haowork-mcp
             - name: HAOWORK_CORE_MCP_CONSUMER_NAME
-              value: manager
+              value: worker-haowork-msn-p005-v122-internal-delivery-leader
             - name: HAOWORK_CORE_MCP_ROUTE_NAME
               value: mcp-server-haowork-mcp.internal
             - name: HAOWORK_CORE_MODEL

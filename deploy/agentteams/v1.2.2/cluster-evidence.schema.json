@@ -18,7 +18,7 @@
       "type": "object",
       "required": ["cluster_name", "contract", "crd_kinds", "zones"],
       "properties": {
-        "cluster_name": { "type": "string", "minLength": 1 },
+        "cluster_name": { "type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
         "contract": {
           "type": "object",
           "required": ["tag", "commit", "chart_version"],
@@ -26,62 +26,118 @@
             "tag": { "const": "v1.2.2" },
             "commit": { "const": "849182af8e017168a5a200a87b1062142caf462d" },
             "chart_version": { "const": "1.1.1" }
-          }
+          },
+          "additionalProperties": false
         },
         "crd_kinds": {
           "type": "array",
           "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
           "items": { "type": "string", "enum": ["Human", "Manager", "Team", "Worker"] }
         },
-        "zones": { "type": "array", "minItems": 2 }
-      }
+        "zones": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["name", "namespace", "release"],
+            "properties": {
+              "name": { "type": "string", "enum": ["public", "internal"] },
+              "namespace": { "type": "string", "enum": ["haowork-public", "haowork-internal"] },
+              "release": { "type": "string", "enum": ["haowork-public-agentteams", "haowork-internal-agentteams"] }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "topology": {
       "type": "object",
-      "required": ["team_name", "team_room_id", "leader_room_id", "manager_principal_id", "leader_principal_id", "worker_principal_ids", "human_principal_id"]
+      "required": ["team_name", "room_kind", "agent_roles", "zone"],
+      "properties": {
+        "team_name": { "type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+        "room_kind": { "const": "leader_dm" },
+        "agent_roles": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["manager", "delivery_leader", "research", "build", "verify"] }
+        },
+        "zone": { "type": "string", "enum": ["public", "internal"] }
+      },
+      "additionalProperties": false
     },
-    "skills": { "type": "object", "minProperties": 3 },
+    "skills": {
+      "type": "object",
+      "required": ["research", "build", "verify"],
+      "properties": {
+        "research": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "enum": ["context", "history", "advisory", "mirror"] } },
+        "build": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "enum": ["context", "record", "history", "patch"] } },
+        "verify": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "enum": ["history", "verify", "audit"] } }
+      },
+      "additionalProperties": false
+    },
     "data_path": {
       "type": "object",
-      "required": ["matrix", "artifact", "mcp"],
+      "required": ["assignment", "matrix", "receipt", "artifact", "mcp"],
       "properties": {
+        "assignment": {
+          "type": "object",
+          "required": ["assignment_id", "state"],
+          "properties": {
+            "assignment_id": { "type": "string", "minLength": 36, "maxLength": 36, "pattern": "^ASN-[0-9a-f]{32}$" },
+            "state": { "const": "REPORT_SUBMITTED" }
+          },
+          "additionalProperties": false
+        },
         "matrix": {
           "type": "object",
-          "required": ["event_id", "sender_id", "room_id", "mission_id"],
+          "required": ["dispatch_event_id", "room_kind"],
           "properties": {
-            "event_id": { "type": "string", "minLength": 2, "pattern": "^\\$\\S+$", "format": "matrix-event-id" },
-            "sender_id": { "type": "string", "minLength": 3, "pattern": "^@[^\\s:]+:.+$", "format": "matrix-user-id" },
-            "room_id": { "type": "string", "minLength": 4, "pattern": "^![^\\s:]+:.+$", "format": "matrix-room-id" },
-            "mission_id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }
+            "dispatch_event_id": { "type": "string", "minLength": 2, "maxLength": 255, "pattern": "^\\$\\S+$", "format": "matrix-event-id" },
+            "room_kind": { "const": "leader_dm" }
+          },
+          "additionalProperties": false
+        },
+        "receipt": {
+          "type": "object",
+          "required": ["receipt_id", "report_sha256", "leader_function", "binding_revision"],
+          "properties": {
+            "receipt_id": { "type": "string", "minLength": 5, "maxLength": 128, "pattern": "^ERC-[A-Za-z0-9][A-Za-z0-9._:-]{0,123}$" },
+            "report_sha256": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$" },
+            "leader_function": { "const": "delivery_leader" },
+            "binding_revision": { "type": "integer", "minimum": 1 }
           },
           "additionalProperties": false
         },
         "artifact": {
           "type": "object",
-          "required": ["uri", "sha256", "size", "environment_id", "s3_key"],
+          "required": ["uri", "sha256", "size", "environment_id"],
           "properties": {
-            "uri": { "type": "string", "minLength": 8, "pattern": "^s3://[^/]+/.+$", "format": "uri" },
-            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "uri": { "type": "string", "minLength": 8, "maxLength": 2048, "pattern": "^s3://(?![a-z0-9.-]*\\.\\.)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/(?!\\.{1,2}(?:/|$))(?!.*?/\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$", "format": "uri" },
+            "sha256": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$" },
             "size": { "type": "integer", "minimum": 0 },
-            "environment_id": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,62}$" },
-            "s3_key": { "type": "string", "minLength": 1, "pattern": "^[^/].*$" }
+            "environment_id": { "type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z][a-z0-9-]{0,62}$" }
           },
           "additionalProperties": false
         },
         "mcp": {
           "type": "object",
-          "required": ["consumer_name", "route_name", "server_name", "trace_id", "trace_sha256", "core_history_sha256"],
+          "required": ["server_name", "consumer_kind", "trace_sha256"],
           "properties": {
-            "consumer_name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
-            "route_name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
-            "server_name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
-            "trace_id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
-            "trace_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-            "core_history_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            "server_name": { "type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+            "consumer_kind": { "const": "agentteams_worker" },
+            "trace_sha256": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$" }
           },
           "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
     },
     "network_policy": {
       "type": "object",
@@ -89,11 +145,18 @@
       "properties": {
         "public_to_internal": { "const": "denied" },
         "internal_to_public": { "const": "denied" }
-      }
+      },
+      "additionalProperties": false
     },
     "restart": {
       "type": "object",
-      "required": ["controller", "matrix_event_count_before", "matrix_event_count_after", "opaque_cursor_before", "opaque_cursor_after", "new_event_id"]
+      "required": ["controller", "start_new_state", "receipt_id"],
+      "properties": {
+        "controller": { "const": "core_bridge" },
+        "start_new_state": { "const": "FRESH_RUN" },
+        "receipt_id": { "type": "string", "minLength": 5, "maxLength": 128, "pattern": "^ERC-[A-Za-z0-9][A-Za-z0-9._:-]{0,123}$" }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

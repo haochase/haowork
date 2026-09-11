@@ -2,10 +2,14 @@ package skillapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/haochase/haowork/internal/app"
+	"github.com/haochase/haowork/internal/executionreceipt"
 	"github.com/haochase/haowork/internal/model"
 	"github.com/haochase/haowork/internal/patchskills"
 	"github.com/haochase/haowork/internal/skillruntime"
@@ -42,6 +46,90 @@ func SignedCrossZoneAdaptersWithConfig(config CrossZoneConfig) AdapterMap {
 
 type ContextAdapter struct{ Service *app.Service }
 type HistoryAdapter struct{ Service *app.Service }
+
+type ExecutionReceiptInvocationResolver struct{ Store executionreceipt.Store }
+
+func (resolver ExecutionReceiptInvocationResolver) ResolveInvocation(ctx context.Context, principal RuntimePrincipal, definition skillruntime.Definition, input json.RawMessage) (skillruntime.Invocation, error) {
+	if resolver.Store == nil || definition.Name != "submit_execution_report" ||
+		!allowsFunction(definition.AllowedFunctions, model.FunctionDeliveryLeader) {
+		return skillruntime.Invocation{}, executionreceipt.ErrReceiptStoreFailed
+	}
+	var report executionreceipt.ExecutionReport
+	if err := decodeStrict(input, &report); err != nil {
+		return skillruntime.Invocation{}, executionreceipt.ErrReceiptSchemaInvalid
+	}
+	assignment, err := resolver.Store.Assignment(ctx, strings.TrimSpace(report.AssignmentID))
+	if err != nil {
+		if errors.Is(err, executionreceipt.ErrAssignmentNotFound) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return skillruntime.Invocation{}, err
+		}
+		return skillruntime.Invocation{}, executionreceipt.ErrReceiptStoreFailed
+	}
+	if assignment.RuntimeBindingRevision != principal.BindingRevision {
+		return skillruntime.Invocation{}, executionreceipt.ErrBindingRevisionMismatch
+	}
+	if assignment.LeaderLogicalActorID != strings.TrimSpace(principal.LogicalActorID) ||
+		assignment.LeaderRuntimePrincipalID != strings.TrimSpace(principal.RuntimePrincipalID) ||
+		assignment.EnvironmentID != strings.TrimSpace(principal.EnvironmentID) ||
+		assignment.AgentTeamsInstanceID != strings.TrimSpace(principal.AgentTeamsInstanceID) {
+		return skillruntime.Invocation{}, executionreceipt.ErrPrincipalMismatch
+	}
+	digest := sha256.Sum256(input)
+	inputSHA256 := hex.EncodeToString(digest[:])
+	return skillruntime.Invocation{
+		ID: "INV-" + inputSHA256, MissionID: assignment.MissionID, TaskID: assignment.GovernanceTaskID,
+		WorkItemID: assignment.WorkItemID, RunID: assignment.RunID, LogicalActorID: principal.LogicalActorID,
+		RuntimePrincipalID: principal.RuntimePrincipalID, AgentTeamsInstanceID: principal.AgentTeamsInstanceID,
+		RuntimeBindingRevision: principal.BindingRevision, SkillName: definition.Name, SkillVersion: definition.Version,
+		EnvironmentID: principal.EnvironmentID, TraceID: "TRC-" + assignment.ID, GoalVersion: assignment.GoalVersion,
+		ContextID: assignment.ContextID, ContextHash: assignment.ContextHash, LeaseID: assignment.LeaseID,
+		Input: append(json.RawMessage(nil), input...), InputSHA256: inputSHA256,
+	}, nil
+}
+
+type ExecutionReceiptAdapter struct{ Service executionreceipt.Service }
+
+func (adapter ExecutionReceiptAdapter) Invoke(ctx context.Context, invocation skillruntime.Invocation) (json.RawMessage, []model.ArtifactRef, error) {
+	if invocation.SkillName != "submit_execution_report" {
+		return nil, nil, errors.New("execution receipt adapter received a different skill")
+	}
+	var report executionreceipt.ExecutionReport
+	if err := decodeStrict(invocation.Input, &report); err != nil {
+		return nil, nil, err
+	}
+	for index := range report.Artifacts {
+		report.Artifacts[index].EnvironmentID = invocation.EnvironmentID
+	}
+	receipt, err := adapter.Service.Submit(ctx, executionreceipt.Principal{
+		LogicalActorID: invocation.LogicalActorID, RuntimePrincipalID: invocation.RuntimePrincipalID,
+		EnvironmentID: invocation.EnvironmentID, AgentTeamsInstanceID: invocation.AgentTeamsInstanceID,
+		BindingRevision: invocation.RuntimeBindingRevision, Function: model.FunctionDeliveryLeader,
+	}, report)
+	if err != nil {
+		return nil, nil, err
+	}
+	receiptSHA256, err := receiptDigest(receipt.ID)
+	if err != nil {
+		return nil, nil, executionreceipt.ErrReceiptStoreFailed
+	}
+	return marshalOutput(map[string]any{
+		"receipt_id": receipt.ID, "assignment_id": receipt.AssignmentID,
+		"accepted_as_candidate": true, "receipt_sha256": receiptSHA256,
+	})
+}
+
+func receiptDigest(receiptID string) (string, error) {
+	const prefix = "ERC-"
+	if len(receiptID) != len(prefix)+sha256.Size*2 || !strings.HasPrefix(receiptID, prefix) {
+		return "", errors.New("receipt id is not a canonical digest identifier")
+	}
+	digest := receiptID[len(prefix):]
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size || strings.ToLower(digest) != digest {
+		return "", errors.New("receipt id is not a canonical digest identifier")
+	}
+	return digest, nil
+}
 
 // CoreAdapters is assembled by core.Project. Cross-zone and transfer capabilities fail closed until their owners inject implementations.
 func CoreAdapters(service *app.Service) AdapterMap {

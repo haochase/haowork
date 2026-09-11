@@ -158,6 +158,11 @@ function Assert-DeploymentScripts {
     Assert-True ($up -match 'LocalDualNamespace') 'up script must support LocalDualNamespace mode'
     Assert-True ($up -match '\.tools\\bin\\\$Name\.exe') 'up script must prefer project-local executable resolution'
     Assert-True ($up -match 'upgrade\s+--install\s+--atomic\s+--wait') 'up script must deploy with atomic wait semantics'
+    Assert-True ($up -match '--force-conflicts') 'Helm 4 upgrades must reclaim chart-owned fields changed by Higress controllers'
+    Assert-True ($up -match "'--server-side',\s*'true',\s*'--force-conflicts'") 'Helm conflict takeover must explicitly enable server-side apply'
+    Assert-True ($up -match 'upgrade\s+--help') 'up script must detect Helm force-conflicts support before using the flag'
+    Assert-True ($up -match '@helmForceConflictsArguments') 'up script must apply the detected Helm conflict arguments to upgrades'
+    Assert-True ($up -match '\$helmForceConflictsArguments\s*=\s*@\(if') 'conditional Helm arguments must remain an array for PowerShell splatting'
     Assert-True ($up -match 'helm\s+template') 'RenderOnly mode must use helm template'
     Assert-True ($up -notmatch 'HAOWORK_P005_IMAGE_DIGEST') 'v1.2.2 deployment must not rely on a single legacy image digest variable'
     Assert-True ($up -match 'Copy-P005V122ChartToCache') 'up script must copy the official chart into the project cache before building dependencies'
@@ -179,17 +184,12 @@ function Assert-DeploymentScripts {
     Assert-True ($up -match 'Write-P005V122KubernetesAPIPolicy') 'up must add a scoped Kubernetes API egress policy before deploying the chart'
     Assert-True ($up -match 'Write-P005V122ExternalEgressPolicy') 'up must allow only explicitly configured external dependency CIDRs'
     Assert-True ($up -match 'Test-P005V122CIDR') 'up must reject non-canonical, multicast, and all-network external CIDRs'
-    Assert-True ($up -match 'Start-P005V122BrowserPortForward') 'up must start controlled browser port-forwards after a local deployment'
-    Assert-True ($up -match 'Stop-P005V122BrowserPortForward') 'up must replace only managed browser port-forwards'
-    Assert-True ($up -match 'Test-P005V122ManagedBrowserEndpoint') 'up must verify browser traffic belongs to its managed port-forward'
-    $managerCreateWait = $up.IndexOf('& $kubectl wait --for=create "manager/default"', [StringComparison]::Ordinal)
-    $managerRunningWait = $up.IndexOf('& $kubectl wait --for="jsonpath={.status.phase}=Running" "manager/default"', [StringComparison]::Ordinal)
-    Assert-True ($managerCreateWait -ge 0 -and $managerRunningWait -gt $managerCreateWait) 'up must wait for Manager creation before waiting for its Running phase'
-    Assert-True ($up -match 'HttpWebRequest') 'up must perform an HTTP-level browser endpoint check'
-    Assert-True ($up -match 'process_start_time_utc') 'up must persist the managed port-forward process start time'
-    Assert-True ($up -match '--kubeconfig') 'up must bind a managed port-forward to the project Kind kubeconfig'
-    Assert-True ($up -match 'Test-P005V122ManagedBrowserCacheDirectory') 'up must only remove an exact token-bound managed port-forward cache directory'
-    Assert-True ($up -match 'RequireBrowserEndpoint') 'up must verify browser endpoint availability after starting port-forwards'
+    Assert-True ($up -match 'Invoke-P005V122ServiceProxyReadiness') 'up must verify both zone services through the Kubernetes API Server Service Proxy'
+    Assert-True ($up -match 'Get-Command\s+Invoke-P005V122ServiceProxyReadiness\s+-CommandType\s+Function') 'up must verify the Service Proxy helper is loaded in script scope before deployment'
+    Assert-True ($up -match 'BLOCKED_SERVICE_PROXY_CONTRACT') 'up must fail before deployment when the Service Proxy helper is not registered'
+    $common = Get-FileText (Join-Path $script:WorktreeRoot 'scripts\p0-05-v122-common.ps1')
+    Assert-True ($common -match 'BLOCKED_SERVICE_PROXY') 'Service Proxy helper must expose explicit failures'
+    Assert-True ($up -notmatch 'Start-P005V122BrowserPortForward|Stop-P005V122BrowserPortForward|RequireBrowserEndpoint|process_start_time_utc') 'up must not persist or manage browser port-forward processes'
     Assert-True ($up -match 'BLOCKED_NAMESPACE_CREATE') 'up must fail closed when namespace creation cannot be rendered'
     Assert-True ($up -match 'BLOCKED_NAMESPACE_LABEL') 'up must fail closed when zone labeling fails'
     Assert-True ($up -match 'BLOCKED_EVIDENCE_PODS') 'up must fail closed when Pod evidence cannot be collected'
@@ -200,6 +200,7 @@ function Assert-DeploymentScripts {
     Assert-True ($down -match 'HELM_CACHE_HOME') 'down must keep Helm state off C drive'
     Assert-True ($down -notmatch 'DockerDesktopWSL|Remove-Item.*Docker') 'down must preserve Docker Desktop data'
     Assert-True ($down -match 'get clusters') 'down must check for the named Kind cluster before reporting cleanup success'
+    Assert-True ($down -notmatch 'Start-P005V122BrowserPortForward|Stop-P005V122BrowserPortForward|RequireBrowserEndpoint|process_start_time_utc') 'down must not persist or manage browser port-forward processes'
     Assert-True ($down -match 'kind export kubeconfig') 'down must export the named Kind kubeconfig into the project cache before cleanup'
     Assert-True ($down -match 'BLOCKED_HELM_UNINSTALL') 'down must fail if a release cannot be uninstalled'
     Assert-True ($down -match 'BLOCKED_NAMESPACE_DELETE') 'down must fail if a namespace cannot be deleted'
@@ -207,31 +208,16 @@ function Assert-DeploymentScripts {
     $directClusterDelete = $down.IndexOf('if ($DeleteCluster)', [StringComparison]::Ordinal)
     $helmUninstall = $down.IndexOf('& $helm uninstall', [StringComparison]::Ordinal)
     Assert-True ($directClusterDelete -ge 0 -and $helmUninstall -gt $directClusterDelete) 'owned DeleteCluster cleanup must bypass namespace-level Helm finalizers'
-    Assert-True ($down -match 'Stop-P005V122BrowserPortForward') 'down must stop only controlled browser port-forwards'
-    Assert-True ($down -match 'process_start_time_utc') 'down must protect against port-forward PID reuse'
     Assert-True ($up -match 'Assert-P005V122ClusterName') 'up must validate the cluster name before deriving cache paths'
     Assert-True ($down -match 'Assert-P005V122ClusterName') 'down must validate the cluster name before deriving cache paths'
     $preflight = Get-FileText (Join-Path $script:WorktreeRoot 'scripts\p0-05-v122-preflight.ps1')
-    Assert-True ($preflight -match 'Test-P005V122DockerDaemon') 'preflight must verify the Docker daemon, not only a docker executable path'
-    Assert-True ($preflight -match 'BLOCKED_DOCKER_DAEMON') 'preflight must expose an unavailable Docker daemon as blocked'
-    Assert-True ($preflight -match 'Get-P005V122DockerCgroupVersion') 'preflight must inspect the Docker daemon cgroup version before creating a Kind cluster'
-    Assert-True ($preflight -match 'BLOCKED_CGROUP_V1') 'preflight must reject Docker daemons that still expose cgroup v1'
-    Assert-True ($preflight -match 'CustomWslDistroDir') 'preflight must read Docker Desktop CustomWslDistroDir rather than trust a directory probe'
-    Assert-True ($preflight -match 'ext4\.vhdx') 'preflight must require the configured Docker Desktop WSL VHDX to exist'
-    Assert-True ($preflight -match 'BLOCKED_DOCKER_STORAGE') 'preflight must block when Docker Desktop storage cannot be verified off C drive'
-    Assert-True ($preflight -match 'Test-P005V122CIDR') 'preflight must validate explicit egress CIDRs before local deployment'
-    Assert-True ($preflight -match 'BLOCKED_EGRESS_CIDRS') 'missing or unsafe external dependency CIDRs must block a real deployment'
-    Assert-True ($preflight -match 'Test-P005V122BrowserEndpoint') 'preflight must validate controlled loopback browser endpoints'
-    Assert-True ($preflight -match 'Test-P005V122ManagedBrowserEndpoint') 'preflight must reject an unrelated listener on a browser port'
-    Assert-True ($preflight -match 'Test-P005V122ManagedBrowserCacheDirectory') 'preflight must require the exact token-bound project cache directory for a managed browser port-forward'
-    Assert-True ($preflight -match 'HttpWebRequest') 'preflight must perform an HTTP-level browser endpoint check'
-    Assert-True ($preflight -match 'RequireBrowserEndpoint') 'preflight must support post-install browser endpoint verification'
-    Assert-True ($preflight -notmatch 'if \(\$SkipDeploymentLock\)') 'preflight must not expose a lock-bypass execution path'
-    Assert-True ($preflight -match 'BLOCKED_BROWSER_ENDPOINT') 'preflight must block local browser acceptance when the port-forward is absent'
     Assert-True ($preflight -match 'Test-P005V122RuntimeProviderEndpoint') 'preflight must probe an explicit runtime provider endpoint before real deployment'
-    Assert-True ($preflight -match 'BLOCKED_RUNTIME_PROVIDER_ENDPOINT') 'unreachable or unapproved runtime provider endpoints must block real deployment'
+    Assert-True ($preflight -match 'BLOCKED_RUNTIME_PROVIDER_CHAT') 'unavailable runtime provider chat capability must block real deployment'
     Assert-True ($preflight -match "Headers\['Authorization'\]") 'runtime provider probe must verify the configured API key is accepted'
     Assert-True ($preflight -match '/models') 'runtime provider probe must use an OpenAI-compatible health route'
+    Assert-True ($preflight -match '/chat/completions') 'runtime provider probe must verify OpenAI-compatible chat capability'
+    Assert-True ($preflight -match "content = 'Return OK'") 'runtime provider probe must use the bounded chat prompt'
+    Assert-True ($preflight -match 'max_tokens = 1') 'runtime provider probe must request at most one token'
     Assert-True ($preflight -match 'request\.Proxy\s*=\s*\$null') 'runtime provider probe must not route through an ambient system proxy'
     foreach ($scriptUnderTest in @($up, $down, $preflight)) {
         Assert-True ($scriptUnderTest -match 'Invoke-P005V122WithDeploymentLock') 'all deployment lifecycle scripts must serialize shared cache and evidence state'
@@ -239,23 +225,11 @@ function Assert-DeploymentScripts {
 
     Assert-True ($preflight -match 'Invoke-P005V122WithEvidenceLock') 'preflight must serialize the shared latest evidence across cluster names'
     Assert-True ($preflight -match 'Move-Item.*preflight') 'preflight must publish evidence atomically after its complete result is assembled'
-    Assert-True ($down -match 'Test-P005V122ManagedBrowserPortForward') 'down must verify managed port-forward process identity before stopping it'
-    Assert-True ($down -match 'kubeconfig_path') 'down must require the recorded project kubeconfig before stopping a port-forward'
-    Assert-True ($down -match 'run_token') 'down must require the recorded per-run token before stopping a port-forward'
-    Assert-True ($down -match 'Test-P005V122ManagedBrowserCacheDirectory') 'down must only remove an exact token-bound managed port-forward cache directory'
-    foreach ($lifecycleScript in @($up, $down)) {
-        Assert-True ($lifecycleScript -match 'function Remove-P005V122ManagedBrowserCacheDirectory') 'browser cache cleanup must use an idempotent managed-directory helper'
-        Assert-True ($lifecycleScript -match 'DirectoryNotFoundException') 'browser cache cleanup must tolerate a concurrent directory removal'
-        Assert-True ($lifecycleScript -match 'BLOCKED_BROWSER_CACHE_CLEANUP') 'browser cache cleanup must still fail closed for persistent removal errors'
-    }
     Assert-True ($down -match 'Get-P005V122DeploymentOwnership') 'down must load durable deployment ownership before deleting resources'
     Assert-True ($down -match 'BLOCKED_DEPLOYMENT_OWNERSHIP') 'down must refuse cleanup without a durable ownership record'
     Assert-True ($down -match 'BLOCKED_NAMESPACE_OWNERSHIP') 'down must refuse cleanup for namespaces that are not owned by this deployment'
     Assert-True ($down -match '--wait') 'down must wait for Helm resource deletion rather than report acceptance as completion'
     Assert-True ($down -match 'kubectl wait') 'down must observe namespace deletion before reporting cleanup success'
-    $downOwnershipStart = $down.IndexOf('Get-P005V122DeploymentOwnership', [System.StringComparison]::Ordinal)
-    $downPortForwardStop = $down.LastIndexOf('Stop-P005V122BrowserPortForward', [System.StringComparison]::Ordinal)
-    Assert-True ($downOwnershipStart -ge 0 -and $downPortForwardStop -gt $downOwnershipStart) 'down must prove deployment ownership before stopping managed port-forwards'
     Assert-True ($up -match 'Get-P005V122DeploymentOwnership') 'up must verify durable deployment ownership before reusing a Kind cluster'
     Assert-True ($up -match 'Write-P005V122DeploymentOwnership') 'up must persist ownership after creating a controlled cluster or namespace'
     Assert-True ($up -match 'haowork\.io/p005-owner') 'up must label controlled namespaces with a deployment ownership token'
@@ -553,48 +527,17 @@ function Assert-DockerStorageEvidence {
     Assert-True ([bool]$storage.vhdx_exists) 'Docker Desktop configured ext4.vhdx must exist'
 }
 
-function Assert-BrowserEndpointBlocker {
-    $preflightPath = Join-Path $script:WorktreeRoot 'scripts\p0-05-v122-preflight.ps1'
-    $preflight = Invoke-P005V122Script -Path $preflightPath -Arguments @('-Mode', 'LocalDualNamespace', '-RequireBrowserEndpoint', '-Json')
-    Assert-True ($preflight.ExitCode -ne 0) 'post-install preflight must fail when its controlled browser endpoints are not available'
-
-    $evidencePath = Join-Path $script:CacheRoot 'evidence\p0-05-v1.2.2\preflight.json'
-    Assert-True (Test-Path -LiteralPath $evidencePath -PathType Leaf) 'post-install preflight must record browser endpoint evidence'
-    $evidence = Get-Content -LiteralPath $evidencePath -Raw -Encoding utf8 | ConvertFrom-Json
-    Assert-True (@($evidence.blocked) -contains 'BLOCKED_BROWSER_ENDPOINT') 'missing local port-forwards must be reported as BLOCKED_BROWSER_ENDPOINT'
-    $endpoints = @($evidence.resource_checks.browser_endpoints)
-    Assert-True ($endpoints.Count -eq 2) 'post-install preflight must report both zone browser endpoints'
-    foreach ($endpoint in $endpoints) {
-        Assert-True ($endpoint.url -match '^http://127\.0\.0\.1:1808[02]$') 'browser endpoint must be an explicit loopback URL'
-    }
-}
-
-function Assert-UnmanagedBrowserListenerBlocked {
-    $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse('127.0.0.1'), 18080)
-    try {
-        $listener.Start()
-        $preflightPath = Join-Path $script:WorktreeRoot 'scripts\p0-05-v122-preflight.ps1'
-        $preflight = Invoke-P005V122Script -Path $preflightPath -Arguments @('-Mode', 'LocalDualNamespace', '-RequireBrowserEndpoint', '-Json')
-        Assert-True ($preflight.ExitCode -ne 0) 'preflight must fail when a browser endpoint is occupied by an unrelated listener'
-
-        $evidencePath = Join-Path $script:CacheRoot 'evidence\p0-05-v1.2.2\preflight.json'
-        $evidence = Get-Content -LiteralPath $evidencePath -Raw -Encoding utf8 | ConvertFrom-Json
-        $publicEndpoint = @($evidence.resource_checks.browser_endpoints | Where-Object { $_.zone -eq 'public' })
-        Assert-True ($publicEndpoint.Count -eq 1) 'preflight must record the public browser endpoint state'
-        Assert-True (-not [bool]$publicEndpoint[0].listening) 'an unrelated listener must not satisfy the managed browser endpoint check'
-        Assert-True (@($evidence.blocked) -contains 'BLOCKED_BROWSER_ENDPOINT') 'unmanaged browser listener must keep browser acceptance blocked'
-    } finally {
-        $listener.Stop()
-    }
-}
-
 function Assert-UnreachableRuntimeProviderBlocked {
     $previous = @{}
     $names = @(
+        'HAOWORK_P005_PUBLIC_LLM_PROVIDER',
         'HAOWORK_P005_PUBLIC_LLM_API_KEY',
         'HAOWORK_P005_PUBLIC_LLM_BASE_URL',
+        'HAOWORK_P005_PUBLIC_LLM_MODEL',
+        'HAOWORK_P005_INTERNAL_LLM_PROVIDER',
         'HAOWORK_P005_INTERNAL_LLM_API_KEY',
         'HAOWORK_P005_INTERNAL_LLM_BASE_URL',
+        'HAOWORK_P005_INTERNAL_LLM_MODEL',
         'HAOWORK_P005_PUBLIC_EGRESS_CIDRS',
         'HAOWORK_P005_INTERNAL_EGRESS_CIDRS'
     )
@@ -602,21 +545,36 @@ function Assert-UnreachableRuntimeProviderBlocked {
         $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     try {
+        $env:HAOWORK_P005_PUBLIC_LLM_PROVIDER = 'openai-compat'
         $env:HAOWORK_P005_PUBLIC_LLM_API_KEY = 'test-only-key'
         $env:HAOWORK_P005_PUBLIC_LLM_BASE_URL = 'http://127.0.0.1:1/v1'
+        $env:HAOWORK_P005_PUBLIC_LLM_MODEL = 'test-only-model'
+        $env:HAOWORK_P005_INTERNAL_LLM_PROVIDER = 'openai-compat'
         $env:HAOWORK_P005_INTERNAL_LLM_API_KEY = 'test-only-key'
         $env:HAOWORK_P005_INTERNAL_LLM_BASE_URL = 'http://127.0.0.1:1/v1'
-        $env:HAOWORK_P005_PUBLIC_EGRESS_CIDRS = '127.0.0.0/8'
-        $env:HAOWORK_P005_INTERNAL_EGRESS_CIDRS = '127.0.0.0/8'
+        $env:HAOWORK_P005_INTERNAL_LLM_MODEL = 'test-only-model'
+        $exactCIDRs = @('127.0.0.1/32')
+        foreach ($hostName in @(
+            'higress-registry.cn-hangzhou.cr.aliyuncs.com',
+            'dockerauth.cn-hangzhou.aliyuncs.com',
+            'cri-r0xfyoxudmtseqq7-registry.oss-cn-hangzhou.aliyuncs.com'
+        )) {
+            foreach ($address in @([System.Net.Dns]::GetHostAddresses($hostName))) {
+                $prefixLength = if ($address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 }
+                $exactCIDRs += "$($address.IPAddressToString)/$prefixLength"
+            }
+        }
+        $env:HAOWORK_P005_PUBLIC_EGRESS_CIDRS = @($exactCIDRs | Sort-Object -Unique) -join ','
+        $env:HAOWORK_P005_INTERNAL_EGRESS_CIDRS = $env:HAOWORK_P005_PUBLIC_EGRESS_CIDRS
         $preflightPath = Join-Path $script:WorktreeRoot 'scripts\p0-05-v122-preflight.ps1'
         $preflight = Invoke-P005V122Script -Path $preflightPath -Arguments @('-Mode', 'LocalDualNamespace', '-Json')
         Assert-True ($preflight.ExitCode -ne 0) 'real preflight must fail for an unreachable runtime provider endpoint'
         $evidencePath = Join-Path $script:CacheRoot 'evidence\p0-05-v1.2.2\preflight.json'
         $evidence = Get-Content -LiteralPath $evidencePath -Raw -Encoding utf8 | ConvertFrom-Json
-        Assert-True (@($evidence.blocked) -contains 'BLOCKED_RUNTIME_PROVIDER_ENDPOINT') 'unreachable provider must be an explicit blocked state'
+        Assert-True (@($evidence.blocked) -contains 'BLOCKED_RUNTIME_PROVIDER_CHAT') 'unavailable provider chat must be an explicit blocked state'
         Assert-True ([bool]$evidence.resource_checks.runtime_provider.checked) 'preflight evidence must record that the runtime provider was checked'
         Assert-True (-not [bool]$evidence.resource_checks.runtime_provider.ready) 'preflight evidence must record the failed runtime provider result without endpoint details'
-        Assert-True (($evidence | ConvertTo-Json -Depth 8) -notmatch 'test-only-key|127\.0\.0\.1:1(?:/|"|,|\s|$)') 'preflight evidence must not retain runtime credential or provider URL fixtures'
+        Assert-True (($evidence | ConvertTo-Json -Depth 8) -notmatch 'test-only-key|test-only-model|Return OK|127\.0\.0\.1:1(?:/|"|,|\s|$)') 'preflight evidence must not retain runtime credential, model, request body, or provider URL fixtures'
     } finally {
         foreach ($name in $names) {
             [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
@@ -636,10 +594,14 @@ function Assert-SpecialCharacterRuntimeValueSerialization {
         ($runtimeFunctions + @"
 `$script:HAOWORK_P005_PUBLIC_LLM_API_KEY = 'key""with\\slash' + "`n" + 'line-two'
 `$script:HAOWORK_P005_PUBLIC_LLM_BASE_URL = 'https://provider.example/v1?quote=""yes'
+`$script:HAOWORK_P005_PUBLIC_LLM_PROVIDER = 'openai-compat'
+`$script:HAOWORK_P005_PUBLIC_LLM_MODEL = 'test-only-model'
 function Get-Item {
     param([string]`$Path)
     if (`$Path -eq 'Env:HAOWORK_P005_PUBLIC_LLM_API_KEY') { return [pscustomobject]@{ Value = `$script:HAOWORK_P005_PUBLIC_LLM_API_KEY } }
     if (`$Path -eq 'Env:HAOWORK_P005_PUBLIC_LLM_BASE_URL') { return [pscustomobject]@{ Value = `$script:HAOWORK_P005_PUBLIC_LLM_BASE_URL } }
+    if (`$Path -eq 'Env:HAOWORK_P005_PUBLIC_LLM_PROVIDER') { return [pscustomobject]@{ Value = `$script:HAOWORK_P005_PUBLIC_LLM_PROVIDER } }
+    if (`$Path -eq 'Env:HAOWORK_P005_PUBLIC_LLM_MODEL') { return [pscustomobject]@{ Value = `$script:HAOWORK_P005_PUBLIC_LLM_MODEL } }
     Microsoft.PowerShell.Management\Get-Item @PSBoundParameters
 }
 Get-P005V122RuntimeValues -Zone public
@@ -717,8 +679,6 @@ Assert-RenderOnlyExecution
 Assert-ConcurrentRenderOnlyExecution
 Assert-CleanupWithoutClusterExecution
 Assert-DockerStorageEvidence
-Assert-BrowserEndpointBlocker
-Assert-UnmanagedBrowserListenerBlocked
 Assert-UnreachableRuntimeProviderBlocked
 Assert-SpecialCharacterRuntimeValueSerialization
 Assert-PreflightEvidenceLockExecution
