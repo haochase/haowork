@@ -19,12 +19,18 @@ import (
 )
 
 type MatrixOutbound struct {
-	MissionID       string         `json:"missionID"`
-	RunID           string         `json:"runID"`
-	WorkItemID      string         `json:"workItemID"`
-	WorkspaceDigest string         `json:"workspaceDigest"`
-	ArtifactRef     string         `json:"artifactRef"`
-	Artifact        MatrixArtifact `json:"artifact,omitempty"`
+	AssignmentID    string                    `json:"assignmentID"`
+	MissionID       string                    `json:"missionID"`
+	RunID           string                    `json:"runID"`
+	WorkItemID      string                    `json:"workItemID"`
+	WorkspaceDigest string                    `json:"workspaceDigest"`
+	ArtifactRef     string                    `json:"artifactRef"`
+	Artifact        MatrixArtifact            `json:"artifact,omitempty"`
+	AllowedSkills   []model.MissionSkillGrant `json:"allowedSkills,omitempty"`
+}
+
+type MatrixDispatch struct {
+	EventID string `json:"event_id"`
 }
 
 // SelectRoom binds subsequent Sync calls to the Leader room observed from the
@@ -214,11 +220,11 @@ func (client *MatrixV3Client) Checkpoint(ctx context.Context) (string, error) {
 // Send puts a compact, governed reference into Matrix. The transaction ID is
 // stable for the same Mission/Run/WorkItem/Artifact tuple, and this method
 // intentionally makes exactly one write request.
-func (client *MatrixV3Client) Send(ctx context.Context, roomID string, outbound MatrixOutbound) error {
+func (client *MatrixV3Client) Send(ctx context.Context, roomID string, outbound MatrixOutbound) (MatrixDispatch, error) {
 	roomID = strings.TrimSpace(roomID)
 	workspaceDigest := strings.ToLower(strings.TrimSpace(outbound.WorkspaceDigest))
-	if roomID == "" || strings.TrimSpace(outbound.MissionID) == "" || strings.TrimSpace(outbound.RunID) == "" || strings.TrimSpace(outbound.WorkItemID) == "" || !isLowerSHA256(workspaceDigest) {
-		return errors.New("Matrix v3 send requires room, mission, run, and work item IDs")
+	if roomID == "" || strings.TrimSpace(outbound.AssignmentID) == "" || strings.TrimSpace(outbound.MissionID) == "" || strings.TrimSpace(outbound.RunID) == "" || strings.TrimSpace(outbound.WorkItemID) == "" || !isLowerSHA256(workspaceDigest) {
+		return MatrixDispatch{}, errors.New("Matrix v3 send requires room, assignment, mission, run, and work item IDs")
 	}
 	txnID := MatrixTransactionID(outbound)
 	path := "/_matrix/client/v3/rooms/" + encodeMatrixRoomID(roomID) + "/send/m.room.message/" + url.PathEscape(txnID)
@@ -226,29 +232,33 @@ func (client *MatrixV3Client) Send(ctx context.Context, roomID string, outbound 
 		EventID string `json:"event_id"`
 	}
 	body := map[string]any{
-		"msgtype":                      "m.text",
-		"body":                         "HAOWORK_CORRELATION_ID: " + txnID + "\n\nHaowork governed mission assigned. Read the attached mission reference and reply with a concise completion summary. Repeat the correlation line exactly as the first line of your reply.",
+		"msgtype": "m.text",
+		"body": fmt.Sprintf("Haowork governed execution assignment\nAssignment ID: %s\nMission artifact URI: %s\nAllowed completion Skill: haowork.submit_execution_report\nWhen work finishes, call haowork.submit_execution_report with required fields: assignment_id=%s, status, summary_sha256, artifacts, checks.",
+			strings.TrimSpace(outbound.AssignmentID), strings.TrimSpace(outbound.ArtifactRef), strings.TrimSpace(outbound.AssignmentID)),
+		"org.haowork.assignment_id":    strings.TrimSpace(outbound.AssignmentID),
 		"org.haowork.mission_id":       strings.TrimSpace(outbound.MissionID),
 		"org.haowork.run_id":           strings.TrimSpace(outbound.RunID),
 		"org.haowork.work_item_id":     strings.TrimSpace(outbound.WorkItemID),
-		"org.haowork.correlation_id":   txnID,
 		"org.haowork.workspace_digest": workspaceDigest,
 		"org.haowork.artifact_ref":     strings.TrimSpace(outbound.ArtifactRef),
 	}
 	artifact, hasArtifact, err := normalizedMatrixArtifact(outbound.ArtifactRef, outbound.Artifact)
 	if err != nil {
-		return err
+		return MatrixDispatch{}, err
 	}
 	if hasArtifact {
 		body["org.haowork.artifacts"] = []MatrixArtifact{artifact}
 	}
+	if len(outbound.AllowedSkills) > 0 {
+		body["org.haowork.allowed_skills"] = append([]model.MissionSkillGrant(nil), outbound.AllowedSkills...)
+	}
 	if err := client.doJSON(ctx, http.MethodPut, path, client.token(), body, &response); err != nil {
-		return err
+		return MatrixDispatch{}, err
 	}
 	if strings.TrimSpace(response.EventID) == "" {
-		return errors.New("Matrix v3 send returned no event_id")
+		return MatrixDispatch{}, errors.New("Matrix v3 send returned no event_id")
 	}
-	return nil
+	return MatrixDispatch{EventID: strings.TrimSpace(response.EventID)}, nil
 }
 
 func normalizedMatrixArtifact(reference string, artifact MatrixArtifact) (MatrixArtifact, bool, error) {
@@ -268,7 +278,7 @@ func normalizedMatrixArtifact(reference string, artifact MatrixArtifact) (Matrix
 // MatrixTransactionID returns the bounded, deterministic Matrix transaction
 // key used for write idempotency without persisting a raw payload.
 func MatrixTransactionID(outbound MatrixOutbound) string {
-	value := strings.Join([]string{strings.TrimSpace(outbound.MissionID), strings.TrimSpace(outbound.RunID), strings.TrimSpace(outbound.WorkItemID), strings.TrimSpace(outbound.ArtifactRef)}, "\x00")
+	value := strings.Join([]string{strings.TrimSpace(outbound.AssignmentID), strings.TrimSpace(outbound.MissionID), strings.TrimSpace(outbound.RunID), strings.TrimSpace(outbound.WorkItemID), strings.TrimSpace(outbound.ArtifactRef)}, "\x00")
 	digest := sha256.Sum256([]byte(value))
 	return "haowork-" + hex.EncodeToString(digest[:16])
 }
@@ -534,7 +544,7 @@ type MatrixPage struct {
 }
 
 type MatrixClient interface {
-	Send(context.Context, string, MatrixOutbound) error
+	Send(context.Context, string, MatrixOutbound) (MatrixDispatch, error)
 	Sync(context.Context, string) (MatrixPage, error)
 }
 
@@ -554,8 +564,15 @@ func NewHTTPMatrixClient(baseURL string, client *http.Client, identity string) *
 	return &HTTPMatrixClient{base: base, client: &copy, identity: strings.TrimSpace(identity)}
 }
 
-func (client *HTTPMatrixClient) Send(ctx context.Context, roomID string, outbound MatrixOutbound) error {
-	return client.do(ctx, http.MethodPost, "rooms/"+url.PathEscape(roomID)+"/send", outbound, nil)
+func (client *HTTPMatrixClient) Send(ctx context.Context, roomID string, outbound MatrixOutbound) (MatrixDispatch, error) {
+	var dispatch MatrixDispatch
+	if err := client.do(ctx, http.MethodPost, "rooms/"+url.PathEscape(roomID)+"/send", outbound, &dispatch); err != nil {
+		return MatrixDispatch{}, err
+	}
+	if strings.TrimSpace(dispatch.EventID) == "" {
+		return MatrixDispatch{}, errors.New("Matrix send returned no event_id")
+	}
+	return MatrixDispatch{EventID: strings.TrimSpace(dispatch.EventID)}, nil
 }
 func (client *HTTPMatrixClient) Sync(ctx context.Context, cursor string) (MatrixPage, error) {
 	var page MatrixPage

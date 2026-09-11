@@ -55,10 +55,13 @@ jobs:
           $tests = @(
             'p0-05-v122-common.tests.ps1',
             'p0-05-v122-env.tests.ps1',
+            'p0-05-v122-upgrade-credentials.tests.ps1',
             'p0-05-v122-cluster-test.tests.ps1',
             'p0-05-v122-higress.tests.ps1',
+            'p0-05-v122-egress.tests.ps1',
             'p0-05-v122-network.tests.ps1',
             'p0-05-v122-process.tests.ps1',
+            'p0-05-v122-browser.tests.ps1',
             'p0-05-v122-provider.tests.ps1',
             'p0-05-v122-offline.tests.ps1'
           )
@@ -120,6 +123,7 @@ jobs:
           HAOWORK_E2E_CLUSTER_NAME: ${{ inputs.cluster_name }}
         run: |
           $configPath = [Environment]::GetEnvironmentVariable('HAOWORK_AGENTTEAMS_ENV_FILE', 'Process')
+          if ([string]::IsNullOrWhiteSpace($configPath) -or -not (Test-Path -LiteralPath $configPath -PathType Leaf)) { throw 'BLOCKED_RUNNER_LOCAL_ENV' }
           . .\scripts\p0-05-v122-env.ps1
           $runnerRoot = Split-Path -Parent (Split-Path -Parent ([IO.Path]::GetFullPath($env:RUNNER_TEMP)) -ErrorAction Stop)
           $configLines = @(Read-P005V122RunnerLocalEnvironmentFile -Path $configPath -WorkspaceRoot $env:GITHUB_WORKSPACE -RunnerRoot $runnerRoot)
@@ -136,9 +140,14 @@ jobs:
             'HAOWORK_P005_INTERNAL_LLM_MODEL',
             'HAOWORK_P005_INTERNAL_EGRESS_CIDRS'
           )
-          foreach ($name in $required) {
+          foreach ($name in $required[0..4]) {
             $value = [Environment]::GetEnvironmentVariable($name, 'Process')
             if ([string]::IsNullOrWhiteSpace($value) -or $value -match '[\r\n]') { throw "BLOCKED_RUNNER_LOCAL_ENV:$name" }
+            Write-Output "::add-mask::$value"
+          }
+          foreach ($name in $required[5..9]) {
+            $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if ([string]::IsNullOrWhiteSpace($value) -or $value -match '[\r\n]') { throw "BLOCKED_INTERNAL_ENV:$name" }
             Write-Output "::add-mask::$value"
           }
 

@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/haochase/haowork/internal/executionreceipt"
 	"github.com/haochase/haowork/internal/model"
 	"github.com/haochase/haowork/internal/skillruntime"
 )
@@ -38,12 +40,17 @@ func (fn BindingReaderFunc) ValidateInvocation(ctx context.Context, invocation s
 	return fn(ctx, invocation)
 }
 
+type InvocationResolver interface {
+	ResolveInvocation(context.Context, RuntimePrincipal, skillruntime.Definition, json.RawMessage) (skillruntime.Invocation, error)
+}
+
 type Server struct {
-	Registry      *skillruntime.Registry
-	Runtime       *skillruntime.Runtime
-	BindingReader BindingReader
-	Authenticator Authenticator
-	MaxBodyBytes  int64
+	Registry            *skillruntime.Registry
+	Runtime             *skillruntime.Runtime
+	BindingReader       BindingReader
+	Authenticator       Authenticator
+	InvocationResolvers map[string]InvocationResolver
+	MaxBodyBytes        int64
 }
 
 func (server *Server) Handler() http.Handler {
@@ -128,7 +135,7 @@ func (server *Server) handleToolsList(response http.ResponseWriter, ctx context.
 
 func (server *Server) handleToolsCall(response http.ResponseWriter, ctx context.Context, id json.RawMessage, principal RuntimePrincipal, raw json.RawMessage) {
 	if server.Registry == nil || server.Runtime == nil {
-		writeRPCError(response, http.StatusServiceUnavailable, id, -32000, "skill runtime unavailable", "denied")
+		writeInternalRPCError(response, id)
 		return
 	}
 	var call callParams
@@ -147,25 +154,74 @@ func (server *Server) handleToolsCall(response http.ResponseWriter, ctx context.
 		return
 	}
 	if err := skillruntime.ValidateJSONInput(definition, call.Arguments); err != nil {
+		if definition.Name == "submit_execution_report" {
+			writeReceiptToolError(response, id, executionreceipt.ErrReceiptSchemaInvalid)
+			return
+		}
 		writeRPCError(response, http.StatusBadRequest, id, -32602, "invalid tool arguments", "invalid_input")
 		return
 	}
-	if strings.TrimSpace(call.Meta.WorkItemID) == "" || strings.TrimSpace(call.Meta.RunID) == "" || strings.TrimSpace(call.Meta.TraceID) == "" {
-		writeRPCError(response, http.StatusBadRequest, id, -32602, "missing invocation binding", "invalid_input")
+	invocationCtx, cancel, err := invocationContext(ctx, definition)
+	if err != nil {
+		writeInternalRPCError(response, id)
 		return
 	}
-	invocation := bindInvocation(call.Meta, principal, definition, call.Arguments)
+	defer cancel()
+	resolver := server.InvocationResolvers[definition.Name]
+	if definition.Name == "submit_execution_report" && resolver == nil {
+		writeInternalRPCError(response, id)
+		return
+	}
+	var invocation skillruntime.Invocation
+	if resolver != nil {
+		invocation, err = resolver.ResolveInvocation(invocationCtx, principal, definition, call.Arguments)
+		if err != nil {
+			if definition.Name == "submit_execution_report" {
+				writeReceiptToolError(response, id, err)
+				return
+			}
+			writeRPCError(response, http.StatusForbidden, id, -32002, "invocation binding is not registered", "denied")
+			return
+		}
+	} else {
+		if strings.TrimSpace(call.Meta.WorkItemID) == "" || strings.TrimSpace(call.Meta.RunID) == "" || strings.TrimSpace(call.Meta.TraceID) == "" {
+			writeRPCError(response, http.StatusBadRequest, id, -32602, "missing invocation binding", "invalid_input")
+			return
+		}
+		invocation = bindInvocation(call.Meta, principal, definition, call.Arguments)
+	}
 	if server.BindingReader == nil {
+		if definition.Name == "submit_execution_report" {
+			writeInternalRPCError(response, id)
+			return
+		}
 		writeRPCError(response, http.StatusServiceUnavailable, id, -32000, "invocation binding reader unavailable", "denied")
 		return
 	}
-	if err := server.BindingReader.ValidateInvocation(ctx, invocation); err != nil {
+	if err := server.BindingReader.ValidateInvocation(invocationCtx, invocation); err != nil {
+		if definition.Name == "submit_execution_report" {
+			writeReceiptToolError(response, id, err)
+			return
+		}
 		writeRPCError(response, http.StatusForbidden, id, -32002, "invocation binding is not registered", "denied")
 		return
 	}
-	result, err := server.Runtime.Invoke(ctx, invocation)
+	if resolver != nil && definition.Name == "submit_execution_report" {
+		if server.Runtime.Adapter == nil {
+			writeInternalRPCError(response, id)
+			return
+		}
+		output, _, err := server.Runtime.Adapter.Invoke(invocationCtx, invocation)
+		if err != nil {
+			writeReceiptToolError(response, id, err)
+			return
+		}
+		writeToolResult(response, id, output, false)
+		return
+	}
+	result, err := server.Runtime.Invoke(invocationCtx, invocation)
 	if err != nil {
-		writeRPCError(response, http.StatusBadRequest, id, -32003, "skill invocation failed", "invalid_input")
+		writeToolFailure(response, id, "invalid_input", false)
 		return
 	}
 	if result.Status == skillruntime.ResultRejected {
@@ -173,14 +229,85 @@ func (server *Server) handleToolsCall(response http.ResponseWriter, ctx context.
 		if result.ErrorCode == skillruntime.CodeApprovalRequired {
 			code = "approval_required"
 		}
-		writeRPCResult(response, http.StatusOK, id, map[string]any{"isError": true, "code": code, "result": result})
+		writeToolFailure(response, id, code, false)
 		return
 	}
 	if result.Status != skillruntime.ResultSucceeded {
-		writeRPCResult(response, http.StatusOK, id, map[string]any{"isError": true, "code": "invalid_input", "result": result})
+		writeToolFailure(response, id, "invalid_input", false)
 		return
 	}
-	writeRPCResult(response, http.StatusOK, id, map[string]any{"isError": false, "structuredContent": json.RawMessage(result.Output), "result": result})
+	writeToolResult(response, id, result.Output, false)
+}
+
+func invocationContext(parent context.Context, definition skillruntime.Definition) (context.Context, context.CancelFunc, error) {
+	timeout, err := time.ParseDuration(strings.TrimSpace(definition.Timeout))
+	if err != nil || timeout <= 0 {
+		return nil, nil, errors.New("skill timeout is invalid")
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	return ctx, cancel, nil
+}
+
+type receiptFailure struct {
+	code      string
+	retryable bool
+}
+
+func writeReceiptToolError(response http.ResponseWriter, id json.RawMessage, err error) {
+	failure := classifyReceiptFailure(err)
+	writeToolFailure(response, id, failure.code, failure.retryable)
+}
+
+func classifyReceiptFailure(err error) receiptFailure {
+	switch {
+	case errors.Is(err, executionreceipt.ErrAssignmentNotFound):
+		return receiptFailure{code: "assignment_not_found"}
+	case errors.Is(err, executionreceipt.ErrBindingRevisionMismatch):
+		return receiptFailure{code: "binding_revision_mismatch"}
+	case errors.Is(err, executionreceipt.ErrPrincipalMismatch):
+		return receiptFailure{code: "principal_mismatch"}
+	case errors.Is(err, executionreceipt.ErrLeaseInvalid):
+		return receiptFailure{code: "lease_invalid"}
+	case errors.Is(err, executionreceipt.ErrAssignmentInactive), errors.Is(err, executionreceipt.ErrAssignmentExpired),
+		errors.Is(err, executionreceipt.ErrAssignmentTerminal), errors.Is(err, executionreceipt.ErrInvalidTransition):
+		return receiptFailure{code: "assignment_inactive"}
+	case errors.Is(err, executionreceipt.ErrReceiptSchemaInvalid):
+		return receiptFailure{code: "receipt_schema_invalid"}
+	case errors.Is(err, executionreceipt.ErrReceiptConflict):
+		return receiptFailure{code: "receipt_conflict"}
+	case errors.Is(err, context.DeadlineExceeded):
+		return receiptFailure{code: "receipt_store_failed", retryable: true}
+	case errors.Is(err, context.Canceled), errors.Is(err, executionreceipt.ErrReceiptStoreFailed),
+		errors.Is(err, executionreceipt.ErrStoreUnavailable), errors.Is(err, executionreceipt.ErrStoreBusy),
+		errors.Is(err, executionreceipt.ErrUnsafeStorePath), errors.Is(err, executionreceipt.ErrHistoryCorrupt):
+		return receiptFailure{code: "receipt_store_failed", retryable: true}
+	default:
+		return receiptFailure{code: "receipt_store_failed", retryable: true}
+	}
+}
+
+func writeToolFailure(response http.ResponseWriter, id json.RawMessage, code string, retryable bool) {
+	payload, err := json.Marshal(map[string]any{"code": code, "retryable": retryable})
+	if err != nil {
+		writeRPCError(response, http.StatusInternalServerError, id, -32603, "internal error", "denied")
+		return
+	}
+	writeToolResult(response, id, payload, true)
+}
+
+func writeToolResult(response http.ResponseWriter, id json.RawMessage, payload json.RawMessage, isError bool) {
+	if !json.Valid(payload) {
+		writeRPCError(response, http.StatusInternalServerError, id, -32603, "invalid tool result", "denied")
+		return
+	}
+	writeRPCResult(response, http.StatusOK, id, map[string]any{
+		"content": []map[string]string{{"type": "text", "text": string(payload)}},
+		"isError": isError,
+	})
+}
+
+func writeInternalRPCError(response http.ResponseWriter, id json.RawMessage) {
+	writeRPCError(response, http.StatusInternalServerError, id, -32603, "internal error", "denied")
 }
 
 func bindInvocation(meta invocationMeta, principal RuntimePrincipal, definition skillruntime.Definition, input json.RawMessage) skillruntime.Invocation {

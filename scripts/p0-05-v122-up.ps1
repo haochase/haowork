@@ -91,7 +91,9 @@ function ConvertTo-P005V122YamlScalar {
 
 function Get-P005V122RuntimeValues {
     param(
-        [Parameter(Mandatory)][string]$Zone
+        [Parameter(Mandatory)][string]$Zone,
+        [string]$AdminPassword,
+        [string]$MinioPassword
     )
 
     $prefix = "HAOWORK_P005_$($Zone.ToUpperInvariant())"
@@ -104,13 +106,17 @@ function Get-P005V122RuntimeValues {
         throw "BLOCKED_RUNTIME_CREDENTIALS: ${prefix} LLM provider, model, API key, and base URL are required"
     }
     $safeProvider = ConvertTo-P005V122YamlScalar -Value $provider
-    $adminPassword = [guid]::NewGuid().ToString('N')
-    $minioPassword = [guid]::NewGuid().ToString('N')
+    if ([string]::IsNullOrWhiteSpace($AdminPassword)) { $AdminPassword = [guid]::NewGuid().ToString('N') }
+    if ([string]::IsNullOrWhiteSpace($MinioPassword)) { $MinioPassword = [guid]::NewGuid().ToString('N') }
+    if ($AdminPassword -match '[\r\n]' -or $AdminPassword.Contains([char]0) -or
+        $MinioPassword -match '[\r\n]' -or $MinioPassword.Contains([char]0)) {
+        throw "BLOCKED_RUNTIME_CREDENTIALS: ${prefix} persisted runtime credentials are invalid"
+    }
     $safeApiKey = ConvertTo-P005V122YamlScalar -Value $apiKey
     $safeBaseUrl = ConvertTo-P005V122YamlScalar -Value $baseUrl
     $safeModel = ConvertTo-P005V122YamlScalar -Value $model
-    $safeAdminPassword = ConvertTo-P005V122YamlScalar -Value $adminPassword
-    $safeMinioPassword = ConvertTo-P005V122YamlScalar -Value $minioPassword
+    $safeAdminPassword = ConvertTo-P005V122YamlScalar -Value $AdminPassword
+    $safeMinioPassword = ConvertTo-P005V122YamlScalar -Value $MinioPassword
     return @"
 credentials:
   llmProvider: $safeProvider
@@ -123,6 +129,51 @@ storage:
     auth:
       rootPassword: $safeMinioPassword
 "@
+}
+
+function ConvertFrom-P005V122RuntimeSecretValue {
+    param(
+        [AllowEmptyString()][string]$EncodedValue,
+        [Parameter(Mandatory)][string]$Blocker
+    )
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($EncodedValue)) { throw 'empty secret value' }
+        $value = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EncodedValue))
+        if ([string]::IsNullOrWhiteSpace($value) -or $value -match '[\r\n]' -or $value.Contains([char]0)) {
+            throw 'invalid secret value'
+        }
+        return $value
+    } catch {
+        throw $Blocker
+    }
+}
+
+function Get-P005V122ExistingRuntimeCredentials {
+    param(
+        [Parameter(Mandatory)][string]$Kubectl,
+        [Parameter(Mandatory)][hashtable]$Zone
+    )
+
+    $runtimeJSON = (& $Kubectl --kubeconfig $env:KUBECONFIG get secret $Zone.RuntimeSecret --namespace $Zone.Namespace -o json) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runtimeJSON)) {
+        throw "BLOCKED_RUNTIME_SECRET_$($Zone.Name.ToUpperInvariant())"
+    }
+    $minioSecretName = "$($Zone.Release)-minio"
+    $minioJSON = (& $Kubectl --kubeconfig $env:KUBECONFIG get secret $minioSecretName --namespace $Zone.Namespace -o json) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($minioJSON)) {
+        throw "BLOCKED_MINIO_SECRET_$($Zone.Name.ToUpperInvariant())"
+    }
+    try {
+        $runtimeSecret = $runtimeJSON | ConvertFrom-Json
+        $minioSecret = $minioJSON | ConvertFrom-Json
+    } catch {
+        throw "BLOCKED_RUNTIME_SECRET_$($Zone.Name.ToUpperInvariant())"
+    }
+    return @{
+        AdminPassword = ConvertFrom-P005V122RuntimeSecretValue -EncodedValue ([string]$runtimeSecret.data.AGENTTEAMS_ADMIN_PASSWORD) -Blocker "BLOCKED_RUNTIME_SECRET_$($Zone.Name.ToUpperInvariant())"
+        MinioPassword = ConvertFrom-P005V122RuntimeSecretValue -EncodedValue ([string]$minioSecret.data.MINIO_ROOT_PASSWORD) -Blocker "BLOCKED_MINIO_SECRET_$($Zone.Name.ToUpperInvariant())"
+    }
 }
 
 function Get-P005V122ProviderHost {
@@ -289,374 +340,6 @@ function Write-P005V122Evidence {
         [Parameter(Mandatory)][string]$Text
     )
     $Text | Set-Content -LiteralPath $Path -Encoding utf8
-}
-
-function Get-P005V122BrowserPortForwards {
-    return @(
-        [ordered]@{ Zone = 'public'; Namespace = 'haowork-public'; Port = 18080; URL = 'http://127.0.0.1:18080' },
-        [ordered]@{ Zone = 'internal'; Namespace = 'haowork-internal'; Port = 18082; URL = 'http://127.0.0.1:18082' }
-    )
-}
-
-function Get-P005V122BrowserPortForwardStatePath {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName
-    )
-
-    return Join-Path $CacheRoot "kind\$ClusterName.browser-port-forwards.json"
-}
-
-function Assert-P005V122BrowserPortForwardStatePath {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$StatePath
-    )
-
-    $kindRoot = [IO.Path]::GetFullPath((Join-Path $CacheRoot 'kind'))
-    $resolvedStatePath = [IO.Path]::GetFullPath($StatePath)
-    if (-not $resolvedStatePath.StartsWith($kindRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'BLOCKED_BROWSER_PORT_FORWARD_STATE'
-    }
-}
-
-function Read-P005V122BrowserPortForwardState {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName
-    )
-
-    $statePath = Get-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -ClusterName $ClusterName
-    Assert-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -StatePath $statePath
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return @() }
-    try {
-        $state = Get-Content -LiteralPath $statePath -Raw -Encoding utf8 | ConvertFrom-Json
-        return @($state.entries)
-    } catch {
-        throw 'BLOCKED_BROWSER_PORT_FORWARD_STATE'
-    }
-}
-
-function Write-P005V122BrowserPortForwardState {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName,
-        [Parameter(Mandatory)][object[]]$Entries
-    )
-
-    $statePath = Get-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -ClusterName $ClusterName
-    Assert-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -StatePath $statePath
-    $temporaryPath = "$statePath.$([guid]::NewGuid().ToString('N')).tmp"
-    try {
-        [ordered]@{ schema_version = 1; entries = @($Entries) } |
-            ConvertTo-Json -Depth 5 |
-            Set-Content -LiteralPath $temporaryPath -Encoding utf8
-        Move-Item -LiteralPath $temporaryPath -Destination $statePath -Force
-    } finally {
-        if (Test-Path -LiteralPath $temporaryPath) {
-            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-
-function Get-P005V122ProcessStartTimeUtc {
-    param([Parameter(Mandatory)][object]$Process)
-
-    try {
-        $creationDate = $Process.CreationDate
-        $dateTime = if ($creationDate -is [DateTime]) {
-            [DateTime]$creationDate
-        } else {
-            [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$creationDate)
-        }
-        return $dateTime.ToUniversalTime().ToString('o')
-    } catch {
-        return $null
-    }
-}
-
-function Test-P005V122RunToken {
-    param([Parameter(Mandatory)][string]$Value)
-
-    return $Value -match '^[0-9a-f]{32}$'
-}
-
-function Test-P005V122ManagedBrowserCacheDirectory {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName,
-        [Parameter(Mandatory)][string]$Zone,
-        [Parameter(Mandatory)][string]$CacheDirectory,
-        [Parameter(Mandatory)][string]$RunToken
-    )
-
-    if (-not (Test-P005V122RunToken -Value $RunToken)) { return $false }
-    try {
-        $expected = [IO.Path]::GetFullPath((Join-Path $CacheRoot "kind\$ClusterName.$Zone.browser-port-forward-$RunToken.kubectl-cache"))
-        return [IO.Path]::GetFullPath($CacheDirectory) -ieq $expected
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122BrowserEndpoint {
-    param(
-        [Parameter(Mandatory)][string]$URL,
-        [int]$TimeoutMilliseconds = 1000
-    )
-
-    try {
-        $uri = [uri]$URL
-        if ($uri.Scheme -ne 'http' -or $uri.Host -ne '127.0.0.1' -or $uri.Port -le 0) { return $false }
-        $request = [System.Net.HttpWebRequest]::Create($uri)
-        $request.Method = 'GET'
-        $request.Timeout = $TimeoutMilliseconds
-        $request.ReadWriteTimeout = $TimeoutMilliseconds
-        $response = $null
-        try {
-            $response = $request.GetResponse()
-        } catch [System.Net.WebException] {
-            $response = $_.Exception.Response
-        }
-        if ($null -eq $response) { return $false }
-        try {
-            $statusCode = [int]$response.StatusCode
-            return $statusCode -ge 200 -and $statusCode -lt 500
-        } finally {
-            $response.Close()
-        }
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122ManagedBrowserPortForward {
-    param(
-        [Parameter(Mandatory)][int]$ProcessId,
-        [Parameter(Mandatory)][string]$Namespace,
-        [Parameter(Mandatory)][int]$Port,
-        [Parameter(Mandatory)][string]$ProcessStartTimeUtc,
-        [Parameter(Mandatory)][string]$KubeconfigPath,
-        [Parameter(Mandatory)][string]$KubectlPath,
-        [Parameter(Mandatory)][string]$CacheDirectory,
-        [Parameter(Mandatory)][string]$RunToken
-    )
-
-    try {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
-        if ($null -eq $process -or [string]$process.Name -notmatch '(?i)^kubectl(?:\.exe)?$') { return $false }
-        if ((Get-P005V122ProcessStartTimeUtc -Process $process) -cne $ProcessStartTimeUtc) { return $false }
-        if (-not (Test-P005V122RunToken -Value $RunToken)) { return $false }
-        if ([IO.Path]::GetFullPath([string]$process.ExecutablePath) -ine [IO.Path]::GetFullPath($KubectlPath)) { return $false }
-        $commandLine = [string]$process.CommandLine
-        $namespacePattern = '(?i)(?:^|\s)--namespace(?:\s+|=)"?' + [regex]::Escape($Namespace) + '"?(?=\s|$)'
-        $addressPattern = '(?i)(?:^|\s)--address(?:\s+|=)"?127\.0\.0\.1"?(?=\s|$)'
-        $portPattern = '(?<!\d)' + [regex]::Escape("$Port:80") + '(?!\d)'
-        $kubeconfigPattern = '(?i)(?:^|\s)--kubeconfig(?:\s+|=)"?' + [regex]::Escape([IO.Path]::GetFullPath($KubeconfigPath)) + '"?(?=\s|$)'
-        $cacheDirectoryPattern = '(?i)(?:^|\s)--cache-dir(?:\s+|=)"?' + [regex]::Escape([IO.Path]::GetFullPath($CacheDirectory)) + '"?(?=\s|$)'
-        return $commandLine -match '(?i)\bport-forward\b' -and
-            $commandLine -match $namespacePattern -and
-            $commandLine -match $addressPattern -and
-            $commandLine -match '(?i)(?:^|\s)(?:service/|svc/)higress-gateway(?=\s|$)' -and
-            $commandLine -match $portPattern -and
-            $commandLine -match $kubeconfigPattern -and
-            $commandLine -match $cacheDirectoryPattern -and
-            $CacheDirectory -match [regex]::Escape($RunToken)
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122ProcessOwnsBrowserPort {
-    param(
-        [Parameter(Mandatory)][int]$ProcessId,
-        [Parameter(Mandatory)][int]$Port
-    )
-
-    try {
-        $listeners = @(Get-NetTCPConnection -State Listen -LocalAddress '127.0.0.1' -LocalPort $Port -ErrorAction Stop)
-        return @($listeners | Where-Object { $_.OwningProcess -eq $ProcessId }).Count -eq 1
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122ManagedBrowserEndpoint {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName,
-        [Parameter(Mandatory)][string]$Zone,
-        [Parameter(Mandatory)][string]$URL,
-        [Parameter(Mandatory)][int]$Port
-    )
-
-    $entries = @(Read-P005V122BrowserPortForwardState -CacheRoot $CacheRoot -ClusterName $ClusterName |
-        Where-Object { [string]$_.zone -eq $Zone })
-    if ($entries.Count -ne 1) { return $false }
-    $entry = $entries[0]
-    try {
-        $processId = [int]$entry.pid
-        $processStartTimeUtc = [string]$entry.process_start_time_utc
-        $kubeconfigPath = [string]$entry.kubeconfig_path
-        $kubectlPath = [string]$entry.kubectl_path
-        $cacheDirectory = [string]$entry.cache_directory
-        $runToken = [string]$entry.run_token
-        if ([string]::IsNullOrWhiteSpace($processStartTimeUtc) -or [string]::IsNullOrWhiteSpace($kubeconfigPath)) { return $false }
-        if (-not (Test-P005V122ManagedBrowserPortForward -ProcessId $processId -Namespace ([string]$entry.namespace) -Port $Port -ProcessStartTimeUtc $processStartTimeUtc -KubeconfigPath $kubeconfigPath -KubectlPath $kubectlPath -CacheDirectory $cacheDirectory -RunToken $runToken)) { return $false }
-        if (-not (Test-P005V122ProcessOwnsBrowserPort -ProcessId $processId -Port $Port)) { return $false }
-        return Test-P005V122BrowserEndpoint -URL $URL
-    } catch {
-        return $false
-    }
-}
-
-function Wait-P005V122BrowserEndpoint {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName,
-        [Parameter(Mandatory)][hashtable]$Endpoint,
-        [int]$TimeoutSeconds = 20
-    )
-
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if (Test-P005V122ManagedBrowserEndpoint -CacheRoot $CacheRoot -ClusterName $ClusterName -Zone $Endpoint.Zone -URL $Endpoint.URL -Port $Endpoint.Port) { return $true }
-        Start-Sleep -Milliseconds 250
-    }
-    return $false
-}
-
-function Remove-P005V122ManagedBrowserCacheDirectory {
-    param([Parameter(Mandatory)][string]$Path)
-
-    for ($attempt = 1; $attempt -le 20; $attempt++) {
-        if (-not (Test-Path -LiteralPath $Path)) { return }
-        try {
-            if ($env:OS -eq 'Windows_NT') {
-                [IO.Directory]::Delete('\\?\' + [IO.Path]::GetFullPath($Path), $true)
-            } else {
-                Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
-            }
-        } catch [System.IO.DirectoryNotFoundException] {
-            # The kubectl process can remove its cache while cleanup is traversing it.
-        } catch [System.Management.Automation.ItemNotFoundException] {
-            # Treat an already-removed managed cache as a successful cleanup.
-        } catch {
-            # A terminating kubectl process can retain a short-lived cache handle.
-        }
-        if (-not (Test-Path -LiteralPath $Path)) { return }
-        Start-Sleep -Milliseconds 100
-    }
-    throw 'BLOCKED_BROWSER_CACHE_CLEANUP'
-}
-
-function Wait-P005V122ManagedProcessExit {
-    param([Parameter(Mandatory)][int]$ProcessId)
-
-    $deadline = [DateTime]::UtcNow.AddSeconds(5)
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if ($null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return $true }
-        Start-Sleep -Milliseconds 100
-    }
-    return $null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
-}
-
-function Stop-P005V122BrowserPortForward {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName
-    )
-
-    $entries = Read-P005V122BrowserPortForwardState -CacheRoot $CacheRoot -ClusterName $ClusterName
-    foreach ($entry in $entries) {
-        $processId = [int]$entry.pid
-        $zone = [string]$entry.zone
-        $processStartTimeUtc = [string]$entry.process_start_time_utc
-        $kubeconfigPath = [string]$entry.kubeconfig_path
-        $kubectlPath = [string]$entry.kubectl_path
-        $cacheDirectory = [string]$entry.cache_directory
-        $runToken = [string]$entry.run_token
-        $safeCacheDirectory = Test-P005V122ManagedBrowserCacheDirectory -CacheRoot $CacheRoot -ClusterName $ClusterName -Zone $zone -CacheDirectory $cacheDirectory -RunToken $runToken
-        if ($safeCacheDirectory -and
-            -not [string]::IsNullOrWhiteSpace($processStartTimeUtc) -and
-            -not [string]::IsNullOrWhiteSpace($kubeconfigPath) -and
-            -not [string]::IsNullOrWhiteSpace($kubectlPath) -and
-            -not [string]::IsNullOrWhiteSpace($cacheDirectory) -and
-            -not [string]::IsNullOrWhiteSpace($runToken) -and
-            (Test-P005V122ManagedBrowserPortForward -ProcessId $processId -Namespace ([string]$entry.namespace) -Port ([int]$entry.port) -ProcessStartTimeUtc $processStartTimeUtc -KubeconfigPath $kubeconfigPath -KubectlPath $kubectlPath -CacheDirectory $cacheDirectory -RunToken $runToken)) {
-            try {
-                Stop-Process -Id $processId -Force -ErrorAction Stop
-            } catch {
-                throw 'BLOCKED_BROWSER_PORT_FORWARD_STOP'
-            }
-            if (-not (Wait-P005V122ManagedProcessExit -ProcessId $processId)) { throw 'BLOCKED_BROWSER_PORT_FORWARD_STOP' }
-        }
-        if ($safeCacheDirectory -and (Test-Path -LiteralPath $cacheDirectory)) {
-            Remove-P005V122ManagedBrowserCacheDirectory -Path $cacheDirectory
-        }
-    }
-    $statePath = Get-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -ClusterName $ClusterName
-    Assert-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -StatePath $statePath
-    if (Test-Path -LiteralPath $statePath) {
-        Remove-Item -LiteralPath $statePath -Force -ErrorAction Stop
-    }
-}
-
-function Start-P005V122BrowserPortForward {
-    param(
-        [Parameter(Mandatory)][string]$Kubectl,
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName
-    )
-
-    Stop-P005V122BrowserPortForward -CacheRoot $CacheRoot -ClusterName $ClusterName
-    $entries = @()
-    try {
-        foreach ($endpoint in Get-P005V122BrowserPortForwards) {
-            $runToken = [guid]::NewGuid().ToString('N')
-            $cacheDirectory = Join-Path $CacheRoot "kind\$ClusterName.$($endpoint.Zone).browser-port-forward-$runToken.kubectl-cache"
-            $stdoutPath = Join-Path $CacheRoot "kind\$ClusterName.$($endpoint.Zone).browser-port-forward.stdout.log"
-            $stderrPath = Join-Path $CacheRoot "kind\$ClusterName.$($endpoint.Zone).browser-port-forward.stderr.log"
-            $process = Start-Process -FilePath $Kubectl -ArgumentList @(
-                '--kubeconfig', $env:KUBECONFIG,
-                '--cache-dir', $cacheDirectory,
-                'port-forward',
-                '--address', '127.0.0.1',
-                '--namespace', $endpoint.Namespace,
-                'service/higress-gateway',
-                "$($endpoint.Port):80"
-            ) -WorkingDirectory $CacheRoot -PassThru -WindowStyle Hidden `
-                -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-            $processRecord = $null
-            for ($attempt = 0; $attempt -lt 20 -and $null -eq $processRecord; $attempt++) {
-                $processRecord = Get-CimInstance Win32_Process -Filter "ProcessId = $($process.Id)" -ErrorAction SilentlyContinue
-                if ($null -eq $processRecord) { Start-Sleep -Milliseconds 100 }
-            }
-            $processStartTimeUtc = if ($null -eq $processRecord) { $null } else { Get-P005V122ProcessStartTimeUtc -Process $processRecord }
-            if ([string]::IsNullOrWhiteSpace($processStartTimeUtc)) { throw "BLOCKED_BROWSER_ENDPOINT_$($endpoint.Zone.ToUpperInvariant())" }
-            $entries += [ordered]@{
-                pid = $process.Id
-                process_start_time_utc = $processStartTimeUtc
-                kubeconfig_path = $env:KUBECONFIG
-                kubectl_path = $Kubectl
-                cache_directory = $cacheDirectory
-                run_token = $runToken
-                zone = $endpoint.Zone
-                namespace = $endpoint.Namespace
-                port = $endpoint.Port
-                url = $endpoint.URL
-                stdout_log = $stdoutPath
-                stderr_log = $stderrPath
-            }
-            Write-P005V122BrowserPortForwardState -CacheRoot $CacheRoot -ClusterName $ClusterName -Entries $entries
-            if (-not (Wait-P005V122BrowserEndpoint -CacheRoot $CacheRoot -ClusterName $ClusterName -Endpoint $endpoint)) {
-                throw "BLOCKED_BROWSER_ENDPOINT_$($endpoint.Zone.ToUpperInvariant())"
-            }
-        }
-    } catch {
-        Stop-P005V122BrowserPortForward -CacheRoot $CacheRoot -ClusterName $ClusterName
-        throw
-    }
 }
 
 function Copy-P005V122ChartToCache {
@@ -862,7 +545,11 @@ metadata:
   labels:
     haowork.io/zone: $($Zone.Name)
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: ["haowork-higress-binding-publisher"]
   policyTypes:
     - Egress
   egress:
@@ -894,7 +581,11 @@ metadata:
   labels:
     haowork.io/zone: $($Zone.Name)
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: ["haowork-higress-binding-publisher"]
   policyTypes:
     - Egress
   egress:
@@ -1134,13 +825,6 @@ function Invoke-P005V122Rollback {
             $failures += "namespace:$($zone.Name)"
         }
     }
-    if ($Transaction.ownership_verified -or $Transaction.created_cluster) {
-        try {
-            Stop-P005V122BrowserPortForward -CacheRoot $CacheRoot -ClusterName $ClusterName
-        } catch {
-            $failures += 'browser-port-forward'
-        }
-    }
     if ($Transaction.created_cluster) {
         & $Kind delete cluster --name $ClusterName | Out-Null
         if ($LASTEXITCODE -ne 0) { $failures += 'kind' }
@@ -1168,7 +852,6 @@ function Assert-P005V122LockedOfficialSource {
     if (-not (Test-Path -LiteralPath $commonPath -PathType Leaf) -or -not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
         throw 'BLOCKED_UPSTREAM_CONTRACT'
     }
-    . $commonPath
     try {
         $contract = Get-P005V122OfficialContract -ContractPath $lockPath
         Assert-P005V122OfficialContract -Contract $contract
@@ -1190,6 +873,12 @@ function Assert-P005V122LockedOfficialSource {
 
 $ClusterName = Assert-P005V122ClusterName -Name $ClusterName
 $worktreeRoot = Get-P005V122WorktreeRoot
+$commonPath = Join-Path $worktreeRoot 'scripts\p0-05-v122-common.ps1'
+if (-not (Test-Path -LiteralPath $commonPath -PathType Leaf)) { throw 'BLOCKED_UPSTREAM_CONTRACT' }
+. $commonPath
+if ($null -eq (Get-Command Invoke-P005V122ServiceProxyReadiness -CommandType Function -ErrorAction SilentlyContinue)) {
+    throw 'BLOCKED_SERVICE_PROXY_CONTRACT'
+}
 $localEnvironmentLoader = Join-Path $PSScriptRoot 'p0-05-v122-env.ps1'
 if (-not (Test-Path -LiteralPath $localEnvironmentLoader -PathType Leaf)) { throw 'BLOCKED_LOCAL_ENV_LOADER' }
 . $localEnvironmentLoader
@@ -1200,6 +889,11 @@ $cacheRoot = Initialize-P005V122Cache -RepoRoot $repoRoot
 $preflightPath = Join-Path $worktreeRoot 'scripts\p0-05-v122-preflight.ps1'
 
 $helm = Resolve-P005V122Executable -RepoRoot $repoRoot -Name 'helm'
+$helmUpgradeHelp = @(& $helm upgrade --help)
+if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_HELM_UPGRADE_HELP' }
+$helmForceConflictsArguments = @(if (($helmUpgradeHelp -join "`n") -match '(?m)^\s*--force-conflicts\b') {
+    '--server-side', 'true', '--force-conflicts'
+})
 $upstreamRoot = Assert-P005V122LockedOfficialSource -WorktreeRoot $worktreeRoot -RepoRoot $repoRoot
 $deploymentRoot = Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2'
 $evidenceRoot = Join-Path $cacheRoot 'evidence\p0-05-v1.2.2'
@@ -1340,13 +1034,22 @@ Invoke-P005V122WithDeploymentLock -ClusterName $ClusterName -Action {
                 }
 
                 $previousRevision = Get-P005V122HelmReleaseRevision -Helm $helm -Zone $zone
-                $runtimeValues = Get-P005V122RuntimeValues -Zone $zone.Name
+                $existingCredentials = if ($null -ne $previousRevision) {
+                    Get-P005V122ExistingRuntimeCredentials -Kubectl $kubectl -Zone $zone
+                } else {
+                    $null
+                }
+                $runtimeValues = if ($null -ne $existingCredentials) {
+                    Get-P005V122RuntimeValues -Zone $zone.Name -AdminPassword $existingCredentials.AdminPassword -MinioPassword $existingCredentials.MinioPassword
+                } else {
+                    Get-P005V122RuntimeValues -Zone $zone.Name
+                }
                 $installValues = Join-Path $cacheRoot "tmp\$($zone.Name)-values.install.yaml"
                 $installOverlay = Join-Path $cacheRoot "tmp\$($zone.Name)-values.install-overlay.yaml"
                 try {
                     Write-P005V122ResolvedValues -BaseValuesPath $zone.BaseValues -OutputPath $installValues
                     $runtimeValues | Set-Content -LiteralPath $installOverlay -Encoding utf8
-                    & $helm upgrade --install --atomic --wait $zone.Release $chartCache --namespace $zone.Namespace --create-namespace --values $installValues --values $installOverlay
+                    & $helm upgrade --install --atomic --wait @helmForceConflictsArguments $zone.Release $chartCache --namespace $zone.Namespace --create-namespace --values $installValues --values $installOverlay
                     if ($LASTEXITCODE -ne 0) { throw "BLOCKED_HELM_INSTALL_$($zone.Name.ToUpperInvariant())" }
                     if ($null -eq $previousRevision) {
                         $transaction.created_releases += $zone
@@ -1372,6 +1075,7 @@ Invoke-P005V122WithDeploymentLock -ClusterName $ClusterName -Action {
                 $providerPrefix = "HAOWORK_P005_$($zone.Name.ToUpperInvariant())"
                 $providerBaseURL = [string](Get-Item -Path "Env:${providerPrefix}_LLM_BASE_URL" -ErrorAction SilentlyContinue).Value
                 Set-P005V122HigressProviderHostHeader -Kubectl $kubectl -Zone $zone -ProviderBaseURL $providerBaseURL -CacheRoot $cacheRoot
+                $null = Invoke-P005V122ServiceProxyReadiness -Kubectl $kubectl -Zone $zone.Name
                 $podsEvidence = & $kubectl get pods --namespace $zone.Namespace -o wide
                 if ($LASTEXITCODE -ne 0) { throw "BLOCKED_EVIDENCE_PODS_$($zone.Name.ToUpperInvariant())" }
                 $podsEvidence | Set-Content -LiteralPath (Join-Path $evidenceRoot "$($zone.Name)-pods.txt") -Encoding utf8
@@ -1380,8 +1084,7 @@ Invoke-P005V122WithDeploymentLock -ClusterName $ClusterName -Action {
                 $managerEvidence | Set-Content -LiteralPath (Join-Path $evidenceRoot "$($zone.Name)-manager.yaml") -Encoding utf8
             }
 
-            Start-P005V122BrowserPortForward -Kubectl $kubectl -CacheRoot $cacheRoot -ClusterName $ClusterName
-            & $preflightPath -Mode LocalDualNamespace -RequireBrowserEndpoint -ClusterName $ClusterName -SkipDeploymentLock
+            & $preflightPath -Mode LocalDualNamespace -ClusterName $ClusterName -SkipDeploymentLock
         } catch {
             $failure = $_.Exception.Message
             try {

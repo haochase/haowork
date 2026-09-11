@@ -1,11 +1,14 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func TestCoreBridgeRunBudgetCoversTopologyAndMatrixPolling(t *testing.T) {
@@ -109,15 +112,89 @@ func TestInternalDeploymentManifestsKeepGovernanceRuntimeIndependent(t *testing.
 	}
 	for _, required := range []string{
 		"kind: Service", "name: haowork-mcp", "haowork-governance-state",
-		"haowork-mcp-runtime-bindings", "HAOWORK_MCP_USE_CORE_BRIDGE_STATE",
+		"/var/lib/haowork/bindings/mcp-bindings.json", "haowork-runtime-bindings", "HAOWORK_MCP_USE_CORE_BRIDGE_STATE",
 	} {
 		if !strings.Contains(mcpText, required) {
 			t.Fatalf("internal MCP manifest omits %q", required)
 		}
 	}
+	if strings.Contains(mcpText, "haowork-mcp-runtime-bindings") {
+		t.Fatal("internal MCP manifest retains the obsolete runtime binding Secret")
+	}
 	for _, forbidden := range []string{"haowork-public", "kind: Secret", "hostNetwork: true", "type: LoadBalancer", "HAOWORK_CORE_MATRIX_TOKEN", "key: matrix-token"} {
 		if strings.Contains(coreText, forbidden) || strings.Contains(mcpText, forbidden) {
 			t.Fatalf("internal manifests contain forbidden %q", forbidden)
+		}
+	}
+}
+
+func TestInternalCoreBridgeManifestParsesWithDeliveryLeaderConsumer(t *testing.T) {
+	path := filepath.Join("..", "..", "deploy", "agentteams", "v1.2.2", "haowork-core-bridge-internal.yaml")
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	type environmentVariable struct {
+		Name  string `yaml:"name"`
+		Value string `yaml:"value"`
+	}
+	type manifest struct {
+		Kind string `yaml:"kind"`
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name string                `yaml:"name"`
+						Env  []environmentVariable `yaml:"env"`
+					} `yaml:"containers"`
+				} `yaml:"spec"`
+			} `yaml:"template"`
+		} `yaml:"spec"`
+	}
+
+	decoder := yaml.NewDecoder(file)
+	var consumers []string
+	for {
+		var document manifest
+		if err := decoder.Decode(&document); err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatalf("decode internal Core Bridge manifest: %v", err)
+		}
+		if document.Kind != "Deployment" {
+			continue
+		}
+		for _, container := range document.Spec.Template.Spec.Containers {
+			if container.Name != "haowork-core-bridge" {
+				continue
+			}
+			for _, variable := range container.Env {
+				if variable.Name == "HAOWORK_CORE_MCP_CONSUMER_NAME" {
+					consumers = append(consumers, variable.Value)
+				}
+			}
+		}
+	}
+
+	want := []string{"worker-haowork-msn-p005-v122-internal-delivery-leader"}
+	if len(consumers) != len(want) || consumers[0] != want[0] {
+		t.Fatalf("internal Core Bridge consumer names = %v, want %v", consumers, want)
+	}
+}
+
+func TestCoreBridgeDeploymentsUseSingleInstanceRecreateStrategy(t *testing.T) {
+	root := filepath.Join("..", "..", "deploy", "agentteams", "v1.2.2")
+	for _, name := range []string{"haowork-core-bridge.yaml", "haowork-core-bridge-internal.yaml"} {
+		content, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(content)
+		if !strings.Contains(text, "kind: Deployment") || !strings.Contains(text, "  replicas: 1") || !strings.Contains(text, "  strategy:\n    type: Recreate") {
+			t.Fatalf("%s must use one replica with Recreate strategy", name)
 		}
 	}
 }

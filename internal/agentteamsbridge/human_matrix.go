@@ -82,9 +82,9 @@ func (client *KubernetesHumanMatrixClient) SelectRoom(roomID string) error {
 	return client.client.SelectRoom(roomID)
 }
 
-func (client *KubernetesHumanMatrixClient) Send(ctx context.Context, roomID string, outbound MatrixOutbound) error {
+func (client *KubernetesHumanMatrixClient) Send(ctx context.Context, roomID string, outbound MatrixOutbound) (MatrixDispatch, error) {
 	if client == nil || client.client == nil {
-		return errors.New("official AgentTeams Human Matrix identity is not bound")
+		return MatrixDispatch{}, errors.New("official AgentTeams Human Matrix identity is not bound")
 	}
 	return client.client.Send(ctx, roomID, outbound)
 }

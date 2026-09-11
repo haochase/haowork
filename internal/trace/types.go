@@ -25,10 +25,16 @@ type Envelope struct {
 	Sequence               uint64                `json:"sequence"`
 	ID                     string                `json:"id"`
 	InvocationID           string                `json:"invocation_id"`
+	AssignmentID           string                `json:"assignment_id,omitempty"`
+	AssignmentRevision     int                   `json:"assignment_revision,omitempty"`
 	MissionID              string                `json:"mission_id"`
 	GovernanceTaskID       string                `json:"governance_task_id"`
 	WorkItemID             string                `json:"work_item_id"`
 	RunID                  string                `json:"run_id"`
+	GoalVersion            int                   `json:"goal_version,omitempty"`
+	ContextID              string                `json:"context_id,omitempty"`
+	ContextHash            string                `json:"context_hash,omitempty"`
+	LeaseID                string                `json:"lease_id,omitempty"`
 	LogicalActorID         string                `json:"logical_actor_id"`
 	RuntimeBindingRevision int                   `json:"runtime_binding_revision"`
 	AgentFunction          model.AgentFunction   `json:"agent_function,omitempty"`
@@ -48,6 +54,9 @@ type Envelope struct {
 	OutputSHA256           string                `json:"output_sha256,omitempty"`
 	ArtifactRefs           []model.ArtifactRef   `json:"artifact_refs,omitempty"`
 	Artifacts              []ArtifactObservation `json:"artifacts,omitempty"`
+	ReportSHA256           string                `json:"report_sha256,omitempty"`
+	ReportStatus           string                `json:"report_status,omitempty"`
+	Candidate              bool                  `json:"candidate,omitempty"`
 	SummarySHA256          string                `json:"summary_sha256,omitempty"`
 	Status                 string                `json:"status"`
 	ErrorCode              string                `json:"error_code,omitempty"`

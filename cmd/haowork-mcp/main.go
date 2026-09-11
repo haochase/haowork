@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/haochase/haowork/internal/core"
 	"github.com/haochase/haowork/internal/corebridge"
+	"github.com/haochase/haowork/internal/executionreceipt"
 	"github.com/haochase/haowork/internal/idgen"
 	"github.com/haochase/haowork/internal/model"
 	"github.com/haochase/haowork/internal/skillapi"
@@ -72,7 +74,7 @@ func run(ctx context.Context, getenv func(string) string) error {
 	if err != nil {
 		return fmt.Errorf("load canonical skills: %w", err)
 	}
-	authenticator, err := skillapi.LoadRuntimeConsumerAuthenticator(bindingsPath)
+	authenticator, err := skillapi.NewFileRuntimeConsumerAuthenticator(bindingsPath)
 	if err != nil {
 		return err
 	}
@@ -85,6 +87,12 @@ func run(ctx context.Context, getenv func(string) string) error {
 		state = bridgeState
 	}
 	store := trace.New(project.Root)
+	receiptStore, err := executionreceipt.Open(project.Root)
+	if err != nil {
+		return fmt.Errorf("open execution receipt store: %w", err)
+	}
+	receiptService := executionreceipt.Service{Store: receiptStore, Trace: store, Clock: func() time.Time { return time.Now().UTC() }}
+	project.SkillAdapters["submit_execution_report"] = skillapi.ExecutionReceiptAdapter{Service: receiptService}
 	runtime := &skillruntime.Runtime{
 		Policy:  skillruntime.Policy{Registry: registry, State: state, Clock: systemClock{}},
 		Adapter: project.SkillAdapters,
@@ -92,8 +100,11 @@ func run(ctx context.Context, getenv func(string) string) error {
 		Tracer:  trace.RuntimeTracer{Store: store, Candidates: unavailableCandidateSink{}, Clock: systemClock{}},
 	}
 	server := &skillapi.Server{
-		Registry: registry, Runtime: runtime, BindingReader: coreStateBindingReader{state: state},
+		Registry: registry, Runtime: runtime, BindingReader: coreStateBindingReader{state: state, receipts: receiptStore},
 		Authenticator: authenticator, MaxBodyBytes: 1 << 20,
+		InvocationResolvers: map[string]skillapi.InvocationResolver{
+			"submit_execution_report": skillapi.ExecutionReceiptInvocationResolver{Store: receiptStore},
+		},
 	}
 	host, err := skillapi.NewHost(skillapi.HostConfig{ListenAddress: listenAddress, RoutePath: getenv(envRoutePath), Server: server})
 	if err != nil {
@@ -111,12 +122,17 @@ func requiredEnvironment(getenv func(string) string, name string) (string, error
 	return value, nil
 }
 
-// coreStateBindingReader allows only the currently registered Core work item
-// to reach the policy engine. Policy performs the subsequent lease, scope,
-// skill, approval, and input-hash checks.
-type coreStateBindingReader struct{ state skillruntime.StateReader }
+// coreStateBindingReader validates legacy calls against Core state and receipt
+// calls against the independently durable execution assignment.
+type coreStateBindingReader struct {
+	state    skillruntime.StateReader
+	receipts executionreceipt.Store
+}
 
 func (reader coreStateBindingReader) ValidateInvocation(ctx context.Context, invocation skillruntime.Invocation) error {
+	if invocation.SkillName == "submit_execution_report" {
+		return reader.validateReceiptInvocation(ctx, invocation)
+	}
 	if reader.state == nil {
 		return skillapi.ErrBindingNotFound
 	}
@@ -152,6 +168,44 @@ func (reader coreStateBindingReader) ValidateInvocation(ctx context.Context, inv
 	}
 	if matches != 1 {
 		return skillapi.ErrBindingNotFound
+	}
+	return nil
+}
+
+func (reader coreStateBindingReader) validateReceiptInvocation(ctx context.Context, invocation skillruntime.Invocation) error {
+	if reader.receipts == nil {
+		return executionreceipt.ErrReceiptStoreFailed
+	}
+	var report struct {
+		AssignmentID string `json:"assignment_id"`
+	}
+	if err := json.Unmarshal(invocation.Input, &report); err != nil || strings.TrimSpace(report.AssignmentID) == "" {
+		return executionreceipt.ErrReceiptSchemaInvalid
+	}
+	assignmentID := strings.TrimSpace(report.AssignmentID)
+	assignment, err := reader.receipts.Assignment(ctx, assignmentID)
+	if err != nil {
+		if errors.Is(err, executionreceipt.ErrAssignmentNotFound) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return executionreceipt.ErrReceiptStoreFailed
+	}
+	if assignment.RuntimeBindingRevision != invocation.RuntimeBindingRevision {
+		return executionreceipt.ErrBindingRevisionMismatch
+	}
+	if assignment.LeaseID != invocation.LeaseID {
+		return executionreceipt.ErrLeaseInvalid
+	}
+	if assignment.LeaderLogicalActorID != invocation.LogicalActorID || assignment.LeaderRuntimePrincipalID != invocation.RuntimePrincipalID ||
+		assignment.AgentTeamsInstanceID != invocation.AgentTeamsInstanceID || assignment.EnvironmentID != invocation.EnvironmentID {
+		return executionreceipt.ErrPrincipalMismatch
+	}
+	if assignment.ID != assignmentID || assignment.MissionID != invocation.MissionID ||
+		assignment.GovernanceTaskID != invocation.TaskID || assignment.WorkItemID != invocation.WorkItemID ||
+		assignment.RunID != invocation.RunID ||
+		assignment.GoalVersion != invocation.GoalVersion || assignment.ContextID != invocation.ContextID ||
+		assignment.ContextHash != invocation.ContextHash {
+		return executionreceipt.ErrAssignmentInactive
 	}
 	return nil
 }

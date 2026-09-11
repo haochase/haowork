@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/haochase/haowork/internal/executionreceipt"
 	"github.com/haochase/haowork/internal/model"
 	"github.com/haochase/haowork/internal/skillruntime"
 )
@@ -38,5 +42,43 @@ func TestCoreStateBindingReaderAcceptsOnlyCurrentCoreWorkItem(t *testing.T) {
 	invocation.WorkItemID = "WI-FORGED"
 	if err := reader.ValidateInvocation(context.Background(), invocation); err == nil {
 		t.Fatal("binding reader accepted a work item not registered by the current Core run")
+	}
+}
+
+func TestCoreStateBindingReaderValidatesReceiptWithoutRunProjection(t *testing.T) {
+	store, err := executionreceipt.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := executionreceipt.ExecutionAssignment{
+		ID: "ASN-46fc8933c009dd44765c6f4b01aeaf9d", ProjectID: "PRJ-001", MissionID: "MSN-001", GovernanceTaskID: "TSK-001",
+		RunID: "RUN-001", WorkItemID: "WKI-001", EnvironmentID: "public", AgentTeamsInstanceID: "AT-001",
+		LeaderLogicalActorID: "AGT-LEADER", LeaderRuntimePrincipalID: "runtime-leader", AssignmentRevision: 1,
+		RuntimeBindingRevision: 2, GoalVersion: 1, ContextID: "CTX-001", ContextHash: strings.Repeat("c", 64), LeaseID: "LSE-001",
+		MissionArtifactURI: "s3://haowork/missions/MSN-001/mission.json", MissionArtifactSHA256: strings.Repeat("d", 64),
+		MatrixRoomID: "!leader:example.test", State: executionreceipt.AssignmentPrepared,
+		CreatedAt: time.Now().UTC().Add(-time.Minute), Deadline: time.Now().UTC().Add(time.Hour),
+	}
+	if _, err := store.Register(context.Background(), assignment); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkDispatched(context.Background(), assignment.ID, "$dispatch"); err != nil {
+		t.Fatal(err)
+	}
+	reader := coreStateBindingReader{receipts: store}
+	invocation := skillruntime.Invocation{
+		MissionID: assignment.MissionID, TaskID: assignment.GovernanceTaskID, WorkItemID: assignment.WorkItemID,
+		RunID: assignment.RunID, LogicalActorID: assignment.LeaderLogicalActorID, RuntimePrincipalID: assignment.LeaderRuntimePrincipalID,
+		AgentTeamsInstanceID: assignment.AgentTeamsInstanceID, RuntimeBindingRevision: assignment.RuntimeBindingRevision,
+		SkillName: "submit_execution_report", EnvironmentID: assignment.EnvironmentID, GoalVersion: assignment.GoalVersion,
+		ContextID: assignment.ContextID, ContextHash: assignment.ContextHash, LeaseID: assignment.LeaseID,
+		Input: []byte(`{"assignment_id":"ASN-46fc8933c009dd44765c6f4b01aeaf9d"}`),
+	}
+	if err := reader.ValidateInvocation(context.Background(), invocation); err != nil {
+		t.Fatalf("receipt invocation rejected without state.Runs: %v", err)
+	}
+	invocation.RuntimeBindingRevision++
+	if err := reader.ValidateInvocation(context.Background(), invocation); !errors.Is(err, executionreceipt.ErrBindingRevisionMismatch) {
+		t.Fatalf("receipt binding error = %v, want ErrBindingRevisionMismatch", err)
 	}
 }

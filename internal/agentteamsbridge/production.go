@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/haochase/haowork/internal/model"
 	"github.com/haochase/haowork/internal/trace"
@@ -21,23 +22,31 @@ type HigressVerifier interface {
 // ProductionConfig is the complete official AgentTeams v1.2.2 dependency
 // set. No retired REST control, Matrix wrapper, or artifact URL is accepted.
 type ProductionConfig struct {
-	EnvironmentID    string
-	Namespace        string
-	ControllerName   string
-	Kubernetes       dynamic.Interface
-	Discovery        discovery.DiscoveryInterface
-	Matrix           MatrixClient
-	Artifacts        ArtifactStore
-	Higress          HigressVerifier
-	MCPServerName    string
-	MCPConsumerName  string
-	MCPRouteName     string
-	ResourceConfig   OfficialResourceConfig
-	RuntimeBindings  RuntimeBindingStore
-	Trace            trace.Store
-	Mission          func(string) (model.MissionEnvelope, error)
-	BindingActor     model.Actor
-	MaxArtifactBytes int64
+	EnvironmentID      string
+	Namespace          string
+	ControllerName     string
+	Kubernetes         dynamic.Interface
+	Discovery          discovery.DiscoveryInterface
+	Matrix             MatrixClient
+	Artifacts          ArtifactStore
+	Higress            HigressVerifier
+	MCPServerName      string
+	MCPConsumerName    string
+	MCPRouteName       string
+	ResourceConfig     OfficialResourceConfig
+	RuntimeBindings    RuntimeBindingStore
+	Assignments        AssignmentStore
+	Trace              trace.Store
+	Mission            func(string) (model.MissionEnvelope, error)
+	BindingActor       model.Actor
+	MaxArtifactBytes   int64
+	ReceiptWaitTimeout time.Duration
+}
+
+type CanonicalArtifactStore interface {
+	ArtifactStore
+	ArtifactURI(string) (string, error)
+	ArtifactKey(string) (string, error)
 }
 
 const (
@@ -57,10 +66,15 @@ func NewProductionTransport(config ProductionConfig) (*Transport, error) {
 		return nil, err
 	}
 	control := NewKubernetesControlPlane(config.Kubernetes, config.Discovery, config.Namespace, config.ControllerName)
+	assignments := config.Assignments
+	if assignments == nil {
+		assignments, _ = config.RuntimeBindings.(AssignmentStore)
+	}
 	return NewTransport(TransportConfig{
 		Orchestrator: OfficialMissionOrchestrator{Control: control, Config: resources},
 		Matrix:       config.Matrix, Artifacts: config.Artifacts, MaxArtifactBytes: config.MaxArtifactBytes,
-		Mission: config.Mission, Trace: config.Trace, RuntimeBindings: config.RuntimeBindings, BindingActor: config.BindingActor,
+		Mission: config.Mission, Trace: config.Trace, RuntimeBindings: config.RuntimeBindings, Assignments: assignments, BindingActor: config.BindingActor,
+		ReceiptWaitTimeout:   config.ReceiptWaitTimeout,
 		EmptyMatrixPollLimit: productionMatrixPollLimit, EmptyMatrixPollInterval: productionMatrixPollInterval,
 		MatrixCheckpointRequired: true,
 		ExpectedEnvironmentID:    strings.TrimSpace(config.EnvironmentID),
@@ -80,16 +94,24 @@ func validateProductionConfig(config ProductionConfig) error {
 	if config.Kubernetes == nil || config.Discovery == nil || config.Matrix == nil || config.Artifacts == nil || config.Higress == nil {
 		return errors.New("official Kubernetes, Matrix v3, S3 artifact, and Higress dependencies are required")
 	}
+	if _, ok := config.Artifacts.(CanonicalArtifactStore); !ok {
+		return errors.New("official S3 artifact store must provide canonical URI and key conversion")
+	}
 	if strings.TrimSpace(config.MCPServerName) == "" || strings.TrimSpace(config.MCPConsumerName) == "" || strings.TrimSpace(config.MCPRouteName) == "" {
 		return errors.New("official Higress MCP server, consumer, and route are required")
 	}
-	if config.RuntimeBindings == nil || config.Trace == nil || config.Mission == nil {
-		return errors.New("governed runtime bindings, trace store, and mission resolver are required")
+	if config.RuntimeBindings == nil || (config.Assignments == nil && !implementsAssignmentStore(config.RuntimeBindings)) || config.Trace == nil || config.Mission == nil {
+		return errors.New("governed runtime bindings, assignment store, trace store, and mission resolver are required")
 	}
 	if strings.TrimSpace(config.BindingActor.ID) == "" || config.BindingActor.Kind != model.ActorHuman || config.BindingActor.Role != model.RoleOwner {
 		return errors.New("human owner binding actor is required")
 	}
 	return nil
+}
+
+func implementsAssignmentStore(value RuntimeBindingStore) bool {
+	_, ok := value.(AssignmentStore)
+	return ok
 }
 
 func normalizedProductionResources(config ProductionConfig) (OfficialResourceConfig, error) {

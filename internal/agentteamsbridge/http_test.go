@@ -29,7 +29,9 @@ func TestHTTPMatrixClientUsesStrictLoopbackRequestsForSendSyncAndStop(t *testing
 		switch r.URL.Path {
 		case "/api/v1/matrix/sync":
 			_, _ = w.Write([]byte(`{"nextCursor":"next","events":[{"id":"$one","kind":"notice","workspaceDigest":"workspace-1","senderID":"runtime-1","senderRole":"agent"}]}`))
-		case "/api/v1/matrix/rooms/!room/send", "/api/v1/matrix/rooms/!room/stop":
+		case "/api/v1/matrix/rooms/!room/send":
+			_, _ = w.Write([]byte(`{"event_id":"$legacy-dispatch"}`))
+		case "/api/v1/matrix/rooms/!room/stop":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -37,7 +39,7 @@ func TestHTTPMatrixClientUsesStrictLoopbackRequestsForSendSyncAndStop(t *testing
 	}))
 	defer server.Close()
 	client := agentteamsbridge.NewHTTPMatrixClient(server.URL, server.Client(), "")
-	if err := client.Send(context.Background(), "!room", agentteamsbridge.MatrixOutbound{MissionID: "MSN-001"}); err != nil {
+	if _, err := client.Send(context.Background(), "!room", agentteamsbridge.MatrixOutbound{AssignmentID: "ASN-001", MissionID: "MSN-001"}); err != nil {
 		t.Fatal(err)
 	}
 	page, err := client.Sync(context.Background(), "saved")

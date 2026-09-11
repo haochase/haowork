@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/haochase/haowork/internal/app"
 	"github.com/haochase/haowork/internal/capsule"
 	"github.com/haochase/haowork/internal/eventstore"
+	"github.com/haochase/haowork/internal/executionreceipt"
 	"github.com/haochase/haowork/internal/executor"
 	"github.com/haochase/haowork/internal/idgen"
 	"github.com/haochase/haowork/internal/model"
@@ -31,23 +33,31 @@ type persistedState struct {
 }
 
 type persistedRun struct {
-	Cursor         string                          `json:"cursor"`
-	SourceEventIDs []string                        `json:"source_event_ids"`
-	Request        executor.AgentTeamsStartRequest `json:"request"`
+	Cursor              string                          `json:"cursor"`
+	SourceEventIDs      []string                        `json:"source_event_ids"`
+	ExecutionReceiptIDs []string                        `json:"execution_receipt_ids"`
+	Request             executor.AgentTeamsStartRequest `json:"request"`
+	LegacyUnverified    bool                            `json:"legacy_unverified,omitempty"`
 }
+
+const currentStateSchemaVersion = 2
+
+var ErrLegacyRunEvidence = errors.New("legacy Core Bridge run has no structured execution receipt")
 
 // State is the durable Core-side boundary used by the in-cluster bridge.
 // Governance bindings use the normal app.Service and event store; only remote
 // Mission inputs and opaque resume cursors live in the separate bridge file.
 type State struct {
-	mu        sync.Mutex
-	root      string
-	path      string
-	events    eventstore.Store
-	trace     trace.Store
-	document  persistedState
-	service   *app.Service
-	projectID string
+	mu              sync.Mutex
+	root            string
+	path            string
+	events          eventstore.Store
+	trace           trace.Store
+	assignments     *executionreceipt.FileStore
+	document        persistedState
+	service         *app.Service
+	projectID       string
+	persistDocument func(persistedState) error
 }
 
 func OpenState(root string) (*State, error) {
@@ -55,11 +65,16 @@ func OpenState(root string) (*State, error) {
 	if err != nil || root == "" {
 		return nil, errors.New("Core Bridge state root is required")
 	}
+	assignments, err := executionreceipt.Open(root)
+	if err != nil {
+		return nil, err
+	}
 	state := &State{
 		root: root, path: filepath.Join(root, ".haowork", "core-bridge", "state.json"),
-		events: eventstore.New(root), trace: trace.New(root),
-		document: persistedState{SchemaVersion: 1, Missions: map[string]model.MissionEnvelope{}, Runs: map[string]persistedRun{}},
+		events: eventstore.New(root), trace: trace.New(root), assignments: assignments,
+		document: persistedState{SchemaVersion: currentStateSchemaVersion, Missions: map[string]model.MissionEnvelope{}, Runs: map[string]persistedRun{}},
 	}
+	state.persistDocument = state.writeDocument
 	governanceDir := filepath.Join(root, ".haowork")
 	if err := os.MkdirAll(governanceDir, 0o700); err != nil {
 		return nil, err
@@ -77,9 +92,22 @@ func OpenState(root string) (*State, error) {
 	return state, nil
 }
 
+func (state *State) Register(ctx context.Context, assignment executionreceipt.ExecutionAssignment) (executionreceipt.ExecutionAssignment, error) {
+	return state.assignments.Register(ctx, assignment)
+}
+
+func (state *State) MarkDispatched(ctx context.Context, assignmentID, eventID string) (executionreceipt.ExecutionAssignment, error) {
+	return state.assignments.MarkDispatched(ctx, assignmentID, eventID)
+}
+
+func (state *State) Wait(ctx context.Context, assignmentID string, timeout time.Duration) (executionreceipt.ExecutionReceipt, error) {
+	return state.assignments.Wait(ctx, assignmentID, timeout)
+}
+
 func (state *State) RegisterMission(ctx context.Context, mission model.MissionEnvelope) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	candidateDocument := clonePersistedState(state.document)
 	canonical, err := model.CanonicalizeMissionEnvelope(mission)
 	if err != nil {
 		return err
@@ -87,19 +115,23 @@ func (state *State) RegisterMission(ctx context.Context, mission model.MissionEn
 	if mission.Hash == "" || mission.Hash != canonical.Hash || canonical.GoalVersion != 1 {
 		return errors.New("Mission canonical hash or initial GoalVersion is invalid")
 	}
-	if existing, ok := state.document.Missions[canonical.ID]; ok {
+	if existing, ok := candidateDocument.Missions[canonical.ID]; ok {
 		left, _ := json.Marshal(existing)
 		right, _ := json.Marshal(canonical)
 		if string(left) != string(right) {
 			return errors.New("Mission ID diverges from persisted Core Bridge state")
 		}
 	} else {
-		state.document.Missions[canonical.ID] = canonical
+		candidateDocument.Missions[canonical.ID] = cloneMissionEnvelope(canonical)
 	}
 	if err := state.ensureGovernanceHistoryLocked(ctx, canonical); err != nil {
 		return err
 	}
-	return state.persistLocked()
+	if err := state.persistDocument(clonePersistedState(candidateDocument)); err != nil {
+		return err
+	}
+	state.document = candidateDocument
+	return nil
 }
 
 func (state *State) ensureProjectManifestLocked(projectID string, goalVersion int, createdAt time.Time) error {
@@ -225,7 +257,7 @@ func (state *State) Mission(id string) (model.MissionEnvelope, error) {
 	if !ok {
 		return model.MissionEnvelope{}, errors.New("Mission is not registered in Core Bridge")
 	}
-	return mission, nil
+	return cloneMissionEnvelope(mission), nil
 }
 
 func (state *State) BindRuntimeTopology(ctx context.Context, bindings []model.RuntimeBinding, actor model.Actor) ([]model.RuntimeBinding, error) {
@@ -261,29 +293,40 @@ func (state *State) RunRequest(runID string) (executor.AgentTeamsStartRequest, b
 	return run.Request, exists
 }
 
-func (state *State) RecordRun(request executor.AgentTeamsStartRequest, events []string, cursor string) error {
+func (state *State) RecordRun(request executor.AgentTeamsStartRequest, sourceEvents, receiptIDs []string, cursor string) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	run := state.document.Runs[request.RunID]
-	seen := make(map[string]struct{}, len(run.SourceEventIDs))
-	for _, id := range run.SourceEventIDs {
-		seen[id] = struct{}{}
+	if len(receiptIDs) != 1 || !executionreceipt.ValidReceiptID(receiptIDs[0]) || len(sourceEvents) != 1 || sourceEvents[0] != receiptIDs[0] {
+		return errors.New("Core Bridge run requires exactly one structured execution receipt")
 	}
-	for _, id := range events {
-		if id == "" {
-			continue
+	candidateDocument := clonePersistedState(state.document)
+	if existing, exists := state.document.Runs[request.RunID]; exists {
+		candidate := persistedRun{Cursor: cursor, SourceEventIDs: append([]string(nil), sourceEvents...), ExecutionReceiptIDs: append([]string(nil), receiptIDs...), Request: request}
+		if !reflect.DeepEqual(existing, candidate) {
+			return errors.New("RunID conflicts with persisted Core Bridge evidence")
 		}
-		if _, ok := seen[id]; !ok {
-			run.SourceEventIDs = append(run.SourceEventIDs, id)
-			seen[id] = struct{}{}
-		}
+		return nil
 	}
-	if cursor != "" {
-		run.Cursor = cursor
+	run := persistedRun{Cursor: cursor, SourceEventIDs: append([]string(nil), sourceEvents...), ExecutionReceiptIDs: append([]string(nil), receiptIDs...), Request: request}
+	candidateDocument.Runs[request.RunID] = run
+	if err := state.persistDocument(clonePersistedState(candidateDocument)); err != nil {
+		return err
 	}
-	run.Request = request
-	state.document.Runs[request.RunID] = run
-	return state.persistLocked()
+	state.document = candidateDocument
+	return nil
+}
+
+func clonePersistedState(source persistedState) persistedState {
+	result := persistedState{SchemaVersion: source.SchemaVersion, Missions: make(map[string]model.MissionEnvelope, len(source.Missions)), Runs: make(map[string]persistedRun, len(source.Runs))}
+	for id, mission := range source.Missions {
+		result.Missions[id] = cloneMissionEnvelope(mission)
+	}
+	for id, run := range source.Runs {
+		run.SourceEventIDs = append([]string(nil), run.SourceEventIDs...)
+		run.ExecutionReceiptIDs = append([]string(nil), run.ExecutionReceiptIDs...)
+		result.Runs[id] = run
+	}
+	return result
 }
 
 // State returns the current Core projection plus authenticated remote
@@ -296,7 +339,7 @@ func (state *State) State(ctx context.Context) (model.ProjectState, error) {
 	}
 	missions := make(map[string]model.MissionEnvelope, len(state.document.Missions))
 	for id, mission := range state.document.Missions {
-		missions[id] = mission
+		missions[id] = cloneMissionEnvelope(mission)
 	}
 	runs := make(map[string]persistedRun, len(state.document.Runs))
 	for id, run := range state.document.Runs {
@@ -321,9 +364,12 @@ func (state *State) State(ctx context.Context) (model.ProjectState, error) {
 		projection.Runs = make(map[string]model.Run)
 	}
 	for id, mission := range missions {
-		projection.Missions[id] = mission
+		projection.Missions[id] = cloneMissionEnvelope(mission)
 	}
 	for id, persisted := range runs {
+		if persisted.LegacyUnverified {
+			continue
+		}
 		request := persisted.Request
 		projection.Tasks[request.TaskID] = model.Task{ID: request.TaskID, GoalVersion: request.GoalVersion, Title: "AgentTeams governed run", Status: model.StatusRunning, LastRunID: id}
 		projection.Runs[id] = model.Run{ID: id, TaskID: request.TaskID, GoalVersion: request.GoalVersion, Executor: "agentteams", ActorID: request.LogicalActorID, ContextID: request.ContextID, ContextHash: request.ContextHash, AdapterCursor: persisted.Cursor, Status: model.StatusRunning}
@@ -347,7 +393,23 @@ func (state *State) reloadDocumentLocked() error {
 	if err := decoder.Decode(&document); err != nil {
 		return err
 	}
-	if document.SchemaVersion != 1 || document.Missions == nil || document.Runs == nil {
+	if document.Missions == nil || document.Runs == nil {
+		return errors.New("Core Bridge state contract is invalid")
+	}
+	switch document.SchemaVersion {
+	case 1:
+		for id, run := range document.Runs {
+			run.LegacyUnverified = true
+			document.Runs[id] = run
+		}
+		document.SchemaVersion = currentStateSchemaVersion
+	case currentStateSchemaVersion:
+		for _, run := range document.Runs {
+			if !run.LegacyUnverified && !validPersistedReceiptRun(run) {
+				return errors.New("Core Bridge state contains unverifiable run evidence")
+			}
+		}
+	default:
 		return errors.New("Core Bridge state contract is invalid")
 	}
 	state.document = document
@@ -356,12 +418,39 @@ func (state *State) reloadDocumentLocked() error {
 
 func (state *State) TraceStore() trace.Store { return state.trace }
 
+func (state *State) CandidateTraceExists(ctx context.Context, runID string) (bool, error) {
+	records, err := state.trace.ReadAll(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, record := range records {
+		if record.RunID == runID && record.Candidate {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (state *State) ReceiptExists(ctx context.Context, assignmentID string) (bool, error) {
+	_, err := state.assignments.Receipt(ctx, assignmentID)
+	if errors.Is(err, executionreceipt.ErrReceiptNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (state *State) Evidence(ctx context.Context, runID string) (RunEvidence, error) {
 	state.mu.Lock()
 	run, ok := state.document.Runs[runID]
 	state.mu.Unlock()
 	if !ok {
 		return RunEvidence{}, errors.New("run evidence is not found")
+	}
+	if run.LegacyUnverified || !validPersistedReceiptRun(run) {
+		return RunEvidence{}, ErrLegacyRunEvidence
 	}
 	events, err := state.events.ReadAll(ctx)
 	if err != nil {
@@ -390,14 +479,33 @@ func (state *State) Evidence(ctx context.Context, runID string) (RunEvidence, er
 	}
 	sort.Strings(traceIDs)
 	sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].Key < artifacts[j].Key })
-	return RunEvidence{RunID: runID, RuntimeBindingRevision: run.Request.RuntimeBindingRevision, Cursor: run.Cursor, SourceEventIDs: append([]string(nil), run.SourceEventIDs...), CoreHistorySHA256: digestJSON(events), TraceSHA256: digestJSON(traces), TraceIDs: traceIDs, Artifacts: artifacts}, nil
+	return RunEvidence{RunID: runID, RuntimeBindingRevision: run.Request.RuntimeBindingRevision, Cursor: run.Cursor, SourceEventIDs: append([]string(nil), run.SourceEventIDs...), ExecutionReceiptIDs: append([]string(nil), run.ExecutionReceiptIDs...), CoreHistorySHA256: digestJSON(events), TraceSHA256: digestJSON(traces), TraceIDs: traceIDs, Artifacts: artifacts}, nil
 }
 
-func (state *State) persistLocked() error {
+func cloneMissionEnvelope(source model.MissionEnvelope) model.MissionEnvelope {
+	result := source
+	result.GovernanceTaskIDs = append([]string(nil), source.GovernanceTaskIDs...)
+	result.CompletionCriteria = append([]string(nil), source.CompletionCriteria...)
+	result.AllowedScopes = append([]string(nil), source.AllowedScopes...)
+	result.AllowedSkills = append([]model.MissionSkillGrant(nil), source.AllowedSkills...)
+	if source.RoleAssignments != nil {
+		result.RoleAssignments = make(map[model.AgentFunction]string, len(source.RoleAssignments))
+		for function, actorID := range source.RoleAssignments {
+			result.RoleAssignments[function] = actorID
+		}
+	}
+	return result
+}
+
+func validPersistedReceiptRun(run persistedRun) bool {
+	return len(run.ExecutionReceiptIDs) == 1 && executionreceipt.ValidReceiptID(run.ExecutionReceiptIDs[0]) && len(run.SourceEventIDs) == 1 && run.SourceEventIDs[0] == run.ExecutionReceiptIDs[0]
+}
+
+func (state *State) writeDocument(document persistedState) error {
 	if err := os.MkdirAll(filepath.Dir(state.path), 0o700); err != nil {
 		return err
 	}
-	encoded, err := json.MarshalIndent(state.document, "", "  ")
+	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return err
 	}

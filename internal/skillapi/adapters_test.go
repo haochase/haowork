@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/haochase/haowork/internal/app"
@@ -12,6 +13,23 @@ import (
 	"github.com/haochase/haowork/internal/patchskills"
 	"github.com/haochase/haowork/internal/skillruntime"
 )
+
+func TestReceiptDigestRequiresCanonicalReceiptIdentifier(t *testing.T) {
+	valid := "ERC-" + strings.Repeat("a", 64)
+	if digest, err := receiptDigest(valid); err != nil || digest != strings.Repeat("a", 64) {
+		t.Fatalf("receiptDigest(valid) = %q, %v", digest, err)
+	}
+	for _, invalid := range []string{
+		strings.Repeat("a", 64),
+		"ERC-" + strings.Repeat("a", 63),
+		"ERC-" + strings.Repeat("A", 64),
+		"ERC-" + strings.Repeat("z", 64),
+	} {
+		if _, err := receiptDigest(invalid); err == nil {
+			t.Fatalf("receiptDigest accepted %q", invalid)
+		}
+	}
+}
 
 func TestCoreAdaptersCallExistingServiceWithoutDirectEventWrites(t *testing.T) {
 	store := &adapterStore{}

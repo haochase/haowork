@@ -3,7 +3,6 @@ param(
     [ValidateSet('RenderOnly', 'ClusterOnly', 'LocalDualNamespace')]
     [string]$Mode = 'LocalDualNamespace',
     [switch]$Json,
-    [switch]$RequireBrowserEndpoint,
     [string]$ClusterName = 'haowork-p005-v122',
     [switch]$SkipDeploymentLock
 )
@@ -265,19 +264,104 @@ function Test-P005V122IPAddressInCIDR {
     return ($addressBytes[$fullBytes] -band $mask) -eq ($networkBytes[$fullBytes] -band $mask)
 }
 
+function Get-P005V122HigressInfrastructureHosts {
+    return @(
+        'higress-registry.cn-hangzhou.cr.aliyuncs.com',
+        'dockerauth.cn-hangzhou.aliyuncs.com',
+        'cri-r0xfyoxudmtseqq7-registry.oss-cn-hangzhou.aliyuncs.com'
+    )
+}
+
+function Test-P005V122ExactHostCIDR {
+    param([Parameter(Mandatory)][string]$CIDR)
+
+    $parts = $CIDR -split '/', 2
+    $address = $null
+    if ($parts.Count -ne 2 -or -not [System.Net.IPAddress]::TryParse($parts[0], [ref]$address)) { return $false }
+    $requiredPrefixLength = $address.GetAddressBytes().Length * 8
+    return $parts[1] -ceq [string]$requiredPrefixLength
+}
+
+function Test-P005V122HostEgressCoverage {
+    param(
+        [Parameter(Mandatory)][string]$HostName,
+        [Parameter(Mandatory)][string[]]$CIDRs,
+        [Parameter(Mandatory)][scriptblock]$AddressResolver
+    )
+
+    try {
+        if ($CIDRs.Count -eq 0 -or @($CIDRs | Where-Object { -not (Test-P005V122ExactHostCIDR -CIDR $_) }).Count -gt 0) {
+            return $false
+        }
+        $addresses = @(& $AddressResolver $HostName)
+        if ($addresses.Count -eq 0) { return $false }
+        foreach ($addressValue in $addresses) {
+            $address = $null
+            if ($addressValue -is [System.Net.IPAddress]) {
+                $address = $addressValue
+            } elseif (-not [System.Net.IPAddress]::TryParse([string]$addressValue, [ref]$address)) {
+                return $false
+            }
+            if (@($CIDRs | Where-Object { Test-P005V122IPAddressInCIDR -IPAddress $address -CIDR $_ }).Count -eq 0) {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Get-P005V122EgressCoverageState {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('public', 'internal')]
+        [string]$Zone,
+        [scriptblock]$AddressResolver = { param([string]$HostName) [System.Net.Dns]::GetHostAddresses($HostName) }
+    )
+
+    $prefix = "HAOWORK_P005_$($Zone.ToUpperInvariant())"
+    $rawCIDRs = [string](Get-Item -Path "Env:${prefix}_EGRESS_CIDRS" -ErrorAction SilentlyContinue).Value
+    $cidrs = @($rawCIDRs -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $baseUrl = [string](Get-Item -Path "Env:${prefix}_LLM_BASE_URL" -ErrorAction SilentlyContinue).Value
+    $modelCovered = $false
+    try {
+        $modelURI = [uri]$baseUrl
+        if ($modelURI.Scheme -in @('http', 'https') -and -not [string]::IsNullOrWhiteSpace($modelURI.Host)) {
+            $modelCovered = Test-P005V122HostEgressCoverage -HostName $modelURI.Host -CIDRs $cidrs -AddressResolver $AddressResolver
+        }
+    } catch {
+        $modelCovered = $false
+    }
+
+    $infrastructureCovered = $true
+    foreach ($hostName in Get-P005V122HigressInfrastructureHosts) {
+        if (-not (Test-P005V122HostEgressCoverage -HostName $hostName -CIDRs $cidrs -AddressResolver $AddressResolver)) {
+            $infrastructureCovered = $false
+        }
+    }
+    return [ordered]@{
+        model_covered = $modelCovered
+        infrastructure_covered = $infrastructureCovered
+    }
+}
+
 function Test-P005V122RuntimeProviderEndpoint {
     param(
         [Parameter(Mandatory)][string]$Zone,
-        [int]$TimeoutMilliseconds = 8000
+        [int]$TimeoutMilliseconds = 8000,
+        [scriptblock]$RequestStreamFactory = { param($Request) $Request.GetRequestStream() }
     )
 
     $prefix = "HAOWORK_P005_$($Zone.ToUpperInvariant())"
     $apiKey = [string](Get-Item -Path "Env:${prefix}_LLM_API_KEY" -ErrorAction SilentlyContinue).Value
     $baseUrl = [string](Get-Item -Path "Env:${prefix}_LLM_BASE_URL" -ErrorAction SilentlyContinue).Value
+    $model = [string](Get-Item -Path "Env:${prefix}_LLM_MODEL" -ErrorAction SilentlyContinue).Value
     $rawCIDRs = [string](Get-Item -Path "Env:${prefix}_EGRESS_CIDRS" -ErrorAction SilentlyContinue).Value
     try {
         $uri = [uri]$baseUrl
-        if ($uri.Scheme -notin @('http', 'https') -or [string]::IsNullOrWhiteSpace($uri.Host) -or $uri.Port -le 0 -or [string]::IsNullOrWhiteSpace($apiKey)) { return $false }
+        if ($uri.Scheme -notin @('http', 'https') -or [string]::IsNullOrWhiteSpace($uri.Host) -or $uri.Port -le 0 -or
+            [string]::IsNullOrWhiteSpace($apiKey) -or [string]::IsNullOrWhiteSpace($model)) { return $false }
         $cidrs = @($rawCIDRs -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         if ($cidrs.Count -eq 0) { return $false }
         $addresses = @([System.Net.Dns]::GetHostAddresses($uri.Host))
@@ -292,46 +376,121 @@ function Test-P005V122RuntimeProviderEndpoint {
             }
             if (-not $covered) { return $false }
         }
-        $builder = New-Object System.UriBuilder($uri)
-        $builder.Query = ''
-        $basePath = $builder.Path.TrimEnd('/')
-        $builder.Path = if ($basePath -match '/models$') { $basePath } elseif ([string]::IsNullOrWhiteSpace($basePath) -or $basePath -eq '/') { '/models' } else { "$basePath/models" }
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
+
+        $basePath = $uri.AbsolutePath.TrimEnd('/')
+        if ($basePath -match '/models$') { $basePath = $basePath.Substring(0, $basePath.Length - '/models'.Length) }
+        $modelsBuilder = New-Object System.UriBuilder($uri)
+        $modelsBuilder.Query = ''
+        $modelsBuilder.Path = if ([string]::IsNullOrWhiteSpace($basePath) -or $basePath -eq '/') { '/models' } else { "$basePath/models" }
+        $chatBuilder = New-Object System.UriBuilder($uri)
+        $chatBuilder.Query = ''
+        $chatBuilder.Path = if ([string]::IsNullOrWhiteSpace($basePath) -or $basePath -eq '/') { '/chat/completions' } else { "$basePath/chat/completions" }
+
+        $invokeProviderRequest = {
+            param(
+                [Parameter(Mandatory)][uri]$RequestURI,
+                [Parameter(Mandatory)][string]$Method,
+                [AllowNull()][byte[]]$Body
+            )
+
             $response = $null
+            $responseBody = ''
             $statusCode = 0
             try {
-                $request = [System.Net.HttpWebRequest]::Create($builder.Uri)
-                $request.Method = 'GET'
+                $request = [System.Net.HttpWebRequest]::Create($RequestURI)
+                $request.Method = $Method
                 $request.Timeout = $TimeoutMilliseconds
                 $request.ReadWriteTimeout = $TimeoutMilliseconds
                 $request.Proxy = $null
+                $request.ServicePoint.Expect100Continue = $false
                 $request.Headers['Authorization'] = "Bearer $apiKey"
-                try {
-                    $response = $request.GetResponse()
-                } catch [System.Net.WebException] {
-                    $response = $_.Exception.Response
+                if ($null -ne $Body) {
+                    $request.ContentType = 'application/json'
+                    $request.ContentLength = $Body.Length
+                    $requestStream = & $RequestStreamFactory $request
+                    try { $requestStream.Write($Body, 0, $Body.Length) } finally { $requestStream.Dispose() }
                 }
+                $response = $request.GetResponse()
                 if ($null -ne $response) {
                     $statusCode = [int]$response.StatusCode
-                    if ($statusCode -ge 200 -and $statusCode -lt 300) { return $true }
-                    if ($statusCode -ne 408 -and $statusCode -ne 429 -and $statusCode -lt 500) { return $false }
+                    if ($statusCode -ge 200 -and $statusCode -lt 300) {
+                        $responseStream = $response.GetResponseStream()
+                        if ($null -ne $responseStream) {
+                            $reader = New-Object IO.StreamReader($responseStream, [Text.Encoding]::UTF8)
+                            try { $responseBody = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                        }
+                    }
                 }
+            } catch [System.Net.WebException] {
+                $statusCode = 0
+                $responseBody = ''
+                $protocolResponse = $_.Exception.Response
+                if ($null -ne $protocolResponse) {
+                    $response = $protocolResponse
+                    $statusCode = [int]$response.StatusCode
+                }
+            } catch [System.IO.IOException] {
+                $statusCode = 0
+                $responseBody = ''
+            } catch [System.TimeoutException] {
+                $statusCode = 0
+                $responseBody = ''
             } finally {
                 if ($null -ne $response) { $response.Close() }
             }
+            return [ordered]@{ status_code = $statusCode; body = $responseBody }
+        }
+
+        $modelsReady = $false
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $modelsResponse = & $invokeProviderRequest -RequestURI $modelsBuilder.Uri -Method 'GET' -Body $null
+            $statusCode = [int]$modelsResponse.status_code
+            if ($statusCode -ge 200 -and $statusCode -lt 300) {
+                $modelsReady = $true
+                break
+            }
+            if ($statusCode -ge 300 -and $statusCode -lt 500 -and $statusCode -ne 429) { return $false }
+            if ($attempt -lt 3) { Start-Sleep -Milliseconds 250 }
+        }
+        if (-not $modelsReady) { return $false }
+
+        $chatDocument = [ordered]@{
+            model = $model
+            messages = @([ordered]@{ role = 'user'; content = 'Return OK' })
+            max_tokens = 1
+            stream = $false
+        }
+        $chatBody = [Text.Encoding]::UTF8.GetBytes(($chatDocument | ConvertTo-Json -Depth 4 -Compress))
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $chatResponse = & $invokeProviderRequest -RequestURI $chatBuilder.Uri -Method 'POST' -Body $chatBody
+            $statusCode = [int]$chatResponse.status_code
+            if ($statusCode -ge 200 -and $statusCode -lt 300) {
+                try {
+                    $document = [string]$chatResponse.body | ConvertFrom-Json
+                    $choicesProperty = $document.PSObject.Properties['choices']
+                    if ($null -eq $choicesProperty -or $choicesProperty.Value -isnot [System.Array] -or
+                        $choicesProperty.Value.Count -eq 0) { return $false }
+                    $firstChoice = $choicesProperty.Value[0]
+                    if ($null -eq $firstChoice -or $firstChoice -isnot [System.Management.Automation.PSCustomObject]) {
+                        return $false
+                    }
+                    $messageProperty = $firstChoice.PSObject.Properties['message']
+                    $textProperty = $firstChoice.PSObject.Properties['text']
+                    $hasMessage = $null -ne $messageProperty -and
+                        $messageProperty.Value -is [System.Management.Automation.PSCustomObject]
+                    $hasText = $null -ne $textProperty -and $textProperty.Value -is [string]
+                    return ($hasMessage -or $hasText)
+                } catch {
+                    return $false
+                }
+            }
+            if ($statusCode -ge 300 -and $statusCode -lt 500 -and $statusCode -ne 429) { return $false }
             if ($attempt -lt 3) { Start-Sleep -Milliseconds 250 }
         }
         return $false
     } catch {
         return $false
     }
-}
-
-function Get-P005V122BrowserEndpoints {
-    return @(
-        [ordered]@{ zone = 'public'; url = 'http://127.0.0.1:18080'; port = 18080 },
-        [ordered]@{ zone = 'internal'; url = 'http://127.0.0.1:18082'; port = 18082 }
-    )
 }
 
 function Invoke-P005V122WithEvidenceLock {
@@ -353,201 +512,6 @@ function Invoke-P005V122WithEvidenceLock {
     } finally {
         if ($hasLock) { $mutex.ReleaseMutex() }
         $mutex.Dispose()
-    }
-}
-
-function Get-P005V122BrowserPortForwardStatePath {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName
-    )
-
-    return Join-Path $CacheRoot "kind\$ClusterName.browser-port-forwards.json"
-}
-
-function Assert-P005V122BrowserPortForwardStatePath {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$StatePath
-    )
-
-    $kindRoot = [IO.Path]::GetFullPath((Join-Path $CacheRoot 'kind'))
-    $resolvedStatePath = [IO.Path]::GetFullPath($StatePath)
-    if (-not $resolvedStatePath.StartsWith($kindRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'BLOCKED_BROWSER_PORT_FORWARD_STATE'
-    }
-}
-
-function Read-P005V122BrowserPortForwardState {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName
-    )
-
-    $statePath = Get-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -ClusterName $ClusterName
-    Assert-P005V122BrowserPortForwardStatePath -CacheRoot $CacheRoot -StatePath $statePath
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return @() }
-    try {
-        $state = Get-Content -LiteralPath $statePath -Raw -Encoding utf8 | ConvertFrom-Json
-        return @($state.entries)
-    } catch {
-        throw 'BLOCKED_BROWSER_PORT_FORWARD_STATE'
-    }
-}
-
-function Get-P005V122ProcessStartTimeUtc {
-    param([Parameter(Mandatory)][object]$Process)
-
-    try {
-        $creationDate = $Process.CreationDate
-        $dateTime = if ($creationDate -is [DateTime]) {
-            [DateTime]$creationDate
-        } else {
-            [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$creationDate)
-        }
-        return $dateTime.ToUniversalTime().ToString('o')
-    } catch {
-        return $null
-    }
-}
-
-function Test-P005V122RunToken {
-    param([Parameter(Mandatory)][string]$Value)
-
-    return $Value -match '^[0-9a-f]{32}$'
-}
-
-function Test-P005V122ManagedBrowserCacheDirectory {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName,
-        [Parameter(Mandatory)][string]$Zone,
-        [Parameter(Mandatory)][string]$CacheDirectory,
-        [Parameter(Mandatory)][string]$RunToken
-    )
-
-    if (-not (Test-P005V122RunToken -Value $RunToken)) { return $false }
-    try {
-        $expected = [IO.Path]::GetFullPath((Join-Path $CacheRoot "kind\$ClusterName.$Zone.browser-port-forward-$RunToken.kubectl-cache"))
-        return [IO.Path]::GetFullPath($CacheDirectory) -ieq $expected
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122BrowserEndpoint {
-    param(
-        [Parameter(Mandatory)][string]$URL,
-        [int]$TimeoutMilliseconds = 1000
-    )
-
-    try {
-        $uri = [uri]$URL
-        if ($uri.Scheme -ne 'http' -or $uri.Host -ne '127.0.0.1' -or $uri.Port -le 0) { return $false }
-        $request = [System.Net.HttpWebRequest]::Create($uri)
-        $request.Method = 'GET'
-        $request.Timeout = $TimeoutMilliseconds
-        $request.ReadWriteTimeout = $TimeoutMilliseconds
-        $response = $null
-        try {
-            $response = $request.GetResponse()
-        } catch [System.Net.WebException] {
-            $response = $_.Exception.Response
-        }
-        if ($null -eq $response) { return $false }
-        try {
-            $statusCode = [int]$response.StatusCode
-            return $statusCode -ge 200 -and $statusCode -lt 500
-        } finally {
-            $response.Close()
-        }
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122ManagedBrowserPortForward {
-    param(
-        [Parameter(Mandatory)][int]$ProcessId,
-        [Parameter(Mandatory)][string]$Namespace,
-        [Parameter(Mandatory)][int]$Port,
-        [Parameter(Mandatory)][string]$ProcessStartTimeUtc,
-        [Parameter(Mandatory)][string]$KubeconfigPath,
-        [Parameter(Mandatory)][string]$KubectlPath,
-        [Parameter(Mandatory)][string]$CacheDirectory,
-        [Parameter(Mandatory)][string]$RunToken
-    )
-
-    try {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
-        if ($null -eq $process -or [string]$process.Name -notmatch '(?i)^kubectl(?:\.exe)?$') { return $false }
-        if ((Get-P005V122ProcessStartTimeUtc -Process $process) -cne $ProcessStartTimeUtc) { return $false }
-        if (-not (Test-P005V122RunToken -Value $RunToken)) { return $false }
-        if ([IO.Path]::GetFullPath([string]$process.ExecutablePath) -ine [IO.Path]::GetFullPath($KubectlPath)) { return $false }
-        $commandLine = [string]$process.CommandLine
-        $namespacePattern = '(?i)(?:^|\s)--namespace(?:\s+|=)"?' + [regex]::Escape($Namespace) + '"?(?=\s|$)'
-        $addressPattern = '(?i)(?:^|\s)--address(?:\s+|=)"?127\.0\.0\.1"?(?=\s|$)'
-        $portPattern = '(?<!\d)' + [regex]::Escape("$Port:80") + '(?!\d)'
-        $kubeconfigPattern = '(?i)(?:^|\s)--kubeconfig(?:\s+|=)"?' + [regex]::Escape([IO.Path]::GetFullPath($KubeconfigPath)) + '"?(?=\s|$)'
-        $cacheDirectoryPattern = '(?i)(?:^|\s)--cache-dir(?:\s+|=)"?' + [regex]::Escape([IO.Path]::GetFullPath($CacheDirectory)) + '"?(?=\s|$)'
-        return $commandLine -match '(?i)\bport-forward\b' -and
-            $commandLine -match $namespacePattern -and
-            $commandLine -match $addressPattern -and
-            $commandLine -match '(?i)(?:^|\s)(?:service/|svc/)higress-gateway(?=\s|$)' -and
-            $commandLine -match $portPattern -and
-            $commandLine -match $kubeconfigPattern -and
-            $commandLine -match $cacheDirectoryPattern -and
-            $CacheDirectory -match [regex]::Escape($RunToken)
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122ProcessOwnsBrowserPort {
-    param(
-        [Parameter(Mandatory)][int]$ProcessId,
-        [Parameter(Mandatory)][int]$Port
-    )
-
-    try {
-        $listeners = @(Get-NetTCPConnection -State Listen -LocalAddress '127.0.0.1' -LocalPort $Port -ErrorAction Stop)
-        return @($listeners | Where-Object { $_.OwningProcess -eq $ProcessId }).Count -eq 1
-    } catch {
-        return $false
-    }
-}
-
-function Test-P005V122ManagedBrowserEndpoint {
-    param(
-        [Parameter(Mandatory)][string]$CacheRoot,
-        [Parameter(Mandatory)][string]$ClusterName,
-        [Parameter(Mandatory)][string]$Zone,
-        [Parameter(Mandatory)][string]$URL,
-        [Parameter(Mandatory)][int]$Port
-    )
-
-    try {
-        $entries = @(Read-P005V122BrowserPortForwardState -CacheRoot $CacheRoot -ClusterName $ClusterName |
-            Where-Object { [string]$_.zone -eq $Zone })
-        if ($entries.Count -ne 1) { return $false }
-        $entry = $entries[0]
-        $processId = [int]$entry.pid
-        $processStartTimeUtc = [string]$entry.process_start_time_utc
-        $kubeconfigPath = [string]$entry.kubeconfig_path
-        $kubectlPath = [string]$entry.kubectl_path
-        $cacheDirectory = [string]$entry.cache_directory
-        $runToken = [string]$entry.run_token
-        if ([string]::IsNullOrWhiteSpace($processStartTimeUtc) -or
-            [string]::IsNullOrWhiteSpace($kubeconfigPath) -or
-            [string]::IsNullOrWhiteSpace($kubectlPath) -or
-            [string]::IsNullOrWhiteSpace($cacheDirectory) -or
-            [string]::IsNullOrWhiteSpace($runToken)) { return $false }
-        if (-not (Test-P005V122ManagedBrowserCacheDirectory -CacheRoot $CacheRoot -ClusterName $ClusterName -Zone $Zone -CacheDirectory $cacheDirectory -RunToken $runToken)) { return $false }
-        if (-not (Test-P005V122ManagedBrowserPortForward -ProcessId $processId -Namespace ([string]$entry.namespace) -Port $Port -ProcessStartTimeUtc $processStartTimeUtc -KubeconfigPath $kubeconfigPath -KubectlPath $kubectlPath -CacheDirectory $cacheDirectory -RunToken $runToken)) { return $false }
-        if (-not (Test-P005V122ProcessOwnsBrowserPort -ProcessId $processId -Port $Port)) { return $false }
-        return Test-P005V122BrowserEndpoint -URL $URL
-    } catch {
-        return $false
     }
 }
 
@@ -595,18 +559,6 @@ $runPreflight = {
     $freeGiB = [math]::Round(((Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='E:'").FreeSpace / 1GB), 1)
     $memoryGiB = Get-P005V122MemoryGiB
     $dockerStorage = Get-P005V122DockerStorageEvidence
-    $browserEndpoints = @(Get-P005V122BrowserEndpoints | ForEach-Object {
-        [ordered]@{
-            zone = $_.zone
-            url = $_.url
-            listening = if ($RequireBrowserEndpoint) {
-                Test-P005V122ManagedBrowserEndpoint -CacheRoot $cacheRoot -ClusterName $ClusterName -Zone $_.zone -URL $_.url -Port $_.port
-            } else {
-                $false
-            }
-        }
-    })
-
     $blocked = @()
     $dockerCgroupVersion = ''
     if ($contractState.State -ne 'READY') { $blocked += $contractState.State }
@@ -647,30 +599,35 @@ $runPreflight = {
                 break
             }
         }
-        $validEgressZones = @()
+        $validProviderEgressZones = @()
         foreach ($zone in @('public', 'internal')) {
             if (-not (Test-P005V122ExternalEgressCIDRs -Zone $zone)) {
                 $blocked += 'BLOCKED_EGRESS_CIDRS'
             } else {
-                $validEgressZones += $zone
+                $coverage = Get-P005V122EgressCoverageState -Zone $zone
+                if (-not [bool]$coverage.model_covered) {
+                    $blocked += 'BLOCKED_EGRESS_CIDRS'
+                } else {
+                    $validProviderEgressZones += $zone
+                }
+                if (-not [bool]$coverage.infrastructure_covered) {
+                    $blocked += 'BLOCKED_INFRASTRUCTURE_EGRESS_CIDRS'
+                }
             }
         }
         $hasRuntimeInputs = $requiredRuntimeNames |
             ForEach-Object { -not [string]::IsNullOrWhiteSpace([string](Get-Item -Path "Env:$_" -ErrorAction SilentlyContinue).Value) } |
             Where-Object { $_ }
-        if (@($hasRuntimeInputs).Count -eq $requiredRuntimeNames.Count -and $validEgressZones.Count -eq 2) {
+        if (@($hasRuntimeInputs).Count -eq $requiredRuntimeNames.Count -and $validProviderEgressZones.Count -eq 2) {
             $runtimeProviderCheck.checked = $true
             $runtimeProviderCheck.ready = $true
             foreach ($zone in @('public', 'internal')) {
                 if (-not (Test-P005V122RuntimeProviderEndpoint -Zone $zone)) {
                     $runtimeProviderCheck.ready = $false
-                    $blocked += 'BLOCKED_RUNTIME_PROVIDER_ENDPOINT'
+                    $blocked += 'BLOCKED_RUNTIME_PROVIDER_CHAT'
                     break
                 }
             }
-        }
-        if ($RequireBrowserEndpoint -and @($browserEndpoints | Where-Object { -not $_.listening }).Count -gt 0) {
-            $blocked += 'BLOCKED_BROWSER_ENDPOINT'
         }
     }
 
@@ -684,7 +641,7 @@ $runPreflight = {
         upstream_root = $sourceState.UpstreamRoot
         chart_root = $chartRoot
         executables = [ordered]@{ docker = $docker; kind = $kind; kubectl = $kubectl; helm = $helm; git = $git }
-        resource_checks = [ordered]@{ memory_gib = $memoryGiB; disk_e_free_gib = $freeGiB; docker_storage = $dockerStorage; docker_cgroup_version = $dockerCgroupVersion; runtime_provider = $runtimeProviderCheck; browser_endpoints = $browserEndpoints }
+        resource_checks = [ordered]@{ memory_gib = $memoryGiB; disk_e_free_gib = $freeGiB; docker_storage = $dockerStorage; docker_cgroup_version = $dockerCgroupVersion; runtime_provider = $runtimeProviderCheck }
     }
     Write-P005V122PreflightEvidence -CacheRoot $cacheRoot -Result $result
     if ($Json) { $result | ConvertTo-Json -Depth 8 }

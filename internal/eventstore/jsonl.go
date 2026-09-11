@@ -473,6 +473,16 @@ func (s Store) ReadAll(ctx context.Context) ([]model.Event, error) {
 	return s.readAllUnlocked()
 }
 
+// ReadAllReadOnly validates the immutable event chain without creating a
+// lock directory. It is for consumers mounted read-only; a concurrent partial
+// append is returned as a validation error and retried by the caller.
+func (s Store) ReadAllReadOnly(ctx context.Context) ([]model.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.readAllUnlocked()
+}
+
 func (s Store) readAllUnlocked() ([]model.Event, error) {
 	file, err := os.Open(s.path)
 	if err != nil {

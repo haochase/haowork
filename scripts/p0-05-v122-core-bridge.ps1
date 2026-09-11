@@ -49,6 +49,58 @@ function ConvertFrom-P005V122AppServiceToken {
     }
 }
 
+function Wait-P005V122LocalDeploymentObserved {
+    param(
+        [Parameter(Mandatory)][string]$Kubectl,
+        [Parameter(Mandatory)][string]$Namespace,
+        [Parameter(Mandatory)][string]$Deployment,
+        [int]$TimeoutSeconds = 180
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $deploymentJSON = (& $Kubectl get deployment $Deployment -n $Namespace -o json) -join "`n"
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($deploymentJSON)) {
+            try {
+                $observed = $deploymentJSON | ConvertFrom-Json
+                $replicas = [int]$observed.spec.replicas
+                if ($replicas -gt 0 -and [long]$observed.status.observedGeneration -eq [long]$observed.metadata.generation -and
+                    [int]$observed.status.updatedReplicas -eq $replicas -and [int]$observed.status.replicas -eq $replicas) {
+                    return
+                }
+            } catch {
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    throw "BLOCKED_LOCAL_DEPLOYMENT_OBSERVATION_$($Namespace.ToUpperInvariant().Replace('-', '_'))_$($Deployment.ToUpperInvariant().Replace('-', '_'))"
+}
+
+function Set-P005V122PrivateAcl {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [switch]$Directory
+    )
+
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $inheritance = if ($Directory) { '(OI)(CI)' } else { '' }
+    & icacls.exe $Path /inheritance:r /grant:r "*$currentSid`:${inheritance}F" "*S-1-5-18:${inheritance}F" "*S-1-5-32-544:${inheritance}F" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET_ACL' }
+    try {
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        $allowedSids = @($currentSid, 'S-1-5-18', 'S-1-5-32-544')
+        $unexpectedAllows = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+            $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.IdentityReference.Value -notin $allowedSids
+        })
+        if (-not $acl.AreAccessRulesProtected -or $owner -cne $currentSid -or $unexpectedAllows.Count -ne 0) {
+            throw 'invalid private ACL'
+        }
+    } catch {
+        throw 'BLOCKED_CORE_BRIDGE_SECRET_ACL'
+    }
+}
+
 function Write-P005V122SecretFile {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -57,15 +109,9 @@ function Write-P005V122SecretFile {
 
     $stream = $null
     try {
-        $security = New-Object System.Security.AccessControl.FileSecurity
-        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-        $security.SetOwner($currentSid)
-        $security.SetAccessRuleProtection($true, $false)
-        foreach ($sid in @($currentSid, (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')), (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
-            [void]$security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)))
-        }
         if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop }
-        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::FullControl, [IO.FileShare]::Read, 4096, [IO.FileOptions]::None, $security)
+        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read, 4096, [IO.FileOptions]::None)
+        Set-P005V122PrivateAcl -Path $Path
         $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false), 4096, $true)
         try {
             foreach ($line in $Lines) { $writer.WriteLine($line) }
@@ -87,30 +133,19 @@ function Write-P005V122SecretFile {
 function Protect-P005V122SecretDirectory {
     param([Parameter(Mandatory)][string]$Path)
 
-    try {
-        $security = New-Object System.Security.AccessControl.DirectorySecurity
-        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-        $security.SetOwner($currentSid)
-        $security.SetAccessRuleProtection($true, $false)
-        $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
-        foreach ($sid in @($currentSid, (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')), (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
-            [void]$security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
-        }
-        Set-Acl -LiteralPath $Path -AclObject $security -ErrorAction Stop
-    } catch {
-        throw 'BLOCKED_CORE_BRIDGE_SECRET_ACL'
-    }
+    Set-P005V122PrivateAcl -Path $Path -Directory
 }
 
 function Invoke-P005V122HigressJSON {
     param(
+        [Parameter(Mandatory)][string]$BaseURL,
         [Parameter(Mandatory)][string]$Method,
         [Parameter(Mandatory)][string]$Path,
         [AllowNull()][object]$Body,
         [Parameter(Mandatory)][Microsoft.PowerShell.Commands.WebRequestSession]$Session
     )
 
-    $parameters = @{ Method = $Method; Uri = "http://127.0.0.1:18083$Path"; WebSession = $Session; UseBasicParsing = $true }
+    $parameters = @{ Method = $Method; Uri = "$BaseURL$Path"; WebSession = $Session; UseBasicParsing = $true }
     if ($null -ne $Body) {
         $parameters.ContentType = 'application/json'
         $parameters.Body = ($Body | ConvertTo-Json -Depth 12 -Compress)
@@ -146,6 +181,12 @@ $environmentLoader = Join-Path $PSScriptRoot 'p0-05-v122-env.ps1'
 if (-not (Test-Path -LiteralPath $environmentLoader -PathType Leaf)) { throw 'BLOCKED_LOCAL_ENV_LOADER' }
 . $environmentLoader
 Import-P005V122LocalEnvironment -Path (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\.env.local')
+$receiptSkillPath = Join-Path $worktreeRoot 'skills\core\submit_execution_report.yaml'
+if (-not (Test-Path -LiteralPath $receiptSkillPath -PathType Leaf) -or
+    -not (Get-Content -LiteralPath $receiptSkillPath -Raw -Encoding utf8).Contains('name: submit_execution_report')) {
+    throw 'BLOCKED_EXECUTION_RECEIPT_SKILL'
+}
+$env:HAOWORK_P005_CORE_BRIDGE_RECEIPT_TOOL = 'submit_execution_report'
 
 $kubectl = Resolve-P005V122CoreTool -Name 'kubectl' -RepoRoot $repoRoot
 $kind = Resolve-P005V122CoreTool -Name 'kind' -RepoRoot $repoRoot
@@ -161,6 +202,8 @@ try {
     $env:CGO_ENABLED = '0'
     Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-core-bridge'), './cmd/haowork-core-bridge')
     Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-mcp'), './cmd/haowork-mcp')
+    Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-agentteams-binding-controller'), './cmd/haowork-agentteams-binding-controller')
+    Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-higress-binding-publisher'), './cmd/haowork-higress-binding-publisher')
     Invoke-P005V122CoreNative -FilePath $go -Arguments @('build', '-trimpath', '-ldflags=-s -w', '-o', (Join-Path $imageRoot 'haowork-network-probe'), './cmd/haowork-network-probe')
 } finally {
     $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = $originalGOOS, $originalGOARCH, $originalCGO
@@ -168,25 +211,33 @@ try {
 
 $coreContext = Join-Path $tempRoot 'core-image'
 $mcpContext = Join-Path $tempRoot 'mcp-image'
+$bindingControllerContext = Join-Path $tempRoot 'binding-controller-image'
+$bindingPublisherContext = Join-Path $tempRoot 'binding-publisher-image'
 $safeTempRoot = [IO.Path]::GetFullPath($tempRoot).TrimEnd('\') + '\'
-foreach ($path in @($coreContext, $mcpContext)) {
+foreach ($path in @($coreContext, $mcpContext, $bindingControllerContext, $bindingPublisherContext)) {
     if (-not [IO.Path]::GetFullPath($path).StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'BLOCKED_CORE_BRIDGE_BUILD_CONTEXT'
     }
 }
-Remove-Item -LiteralPath $coreContext, $mcpContext -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $coreContext, (Join-Path $mcpContext 'skills') | Out-Null
+Remove-Item -LiteralPath $coreContext, $mcpContext, $bindingControllerContext, $bindingPublisherContext -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $coreContext, (Join-Path $mcpContext 'skills'), $bindingControllerContext, $bindingPublisherContext | Out-Null
 Copy-Item -LiteralPath (Join-Path $imageRoot 'haowork-core-bridge') -Destination (Join-Path $coreContext 'haowork-core-bridge')
 Copy-Item -LiteralPath (Join-Path $imageRoot 'haowork-mcp') -Destination (Join-Path $mcpContext 'haowork-mcp')
 Copy-Item -Path (Join-Path $worktreeRoot 'skills\*') -Destination (Join-Path $mcpContext 'skills') -Recurse
+Copy-Item -LiteralPath (Join-Path $imageRoot 'haowork-agentteams-binding-controller') -Destination (Join-Path $bindingControllerContext 'haowork-agentteams-binding-controller')
+Copy-Item -LiteralPath (Join-Path $imageRoot 'haowork-higress-binding-publisher') -Destination (Join-Path $bindingPublisherContext 'haowork-higress-binding-publisher')
 [IO.File]::WriteAllText((Join-Path $coreContext 'Dockerfile'), "FROM scratch`nCOPY haowork-core-bridge /haowork-core-bridge`nUSER 65532:65532`nENTRYPOINT [`"/haowork-core-bridge`"]`n", [Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText((Join-Path $mcpContext 'Dockerfile'), "FROM scratch`nCOPY haowork-mcp /haowork-mcp`nCOPY skills /opt/haowork/skills`nUSER 65532:65532`nENTRYPOINT [`"/haowork-mcp`"]`n", [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $bindingControllerContext 'Dockerfile'), "FROM scratch`nCOPY haowork-agentteams-binding-controller /haowork-agentteams-binding-controller`nUSER 65532:65532`nENTRYPOINT [`"/haowork-agentteams-binding-controller`"]`n", [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $bindingPublisherContext 'Dockerfile'), "FROM scratch`nCOPY haowork-higress-binding-publisher /haowork-higress-binding-publisher`nUSER 65532:65532`nENTRYPOINT [`"/haowork-higress-binding-publisher`"]`n", [Text.UTF8Encoding]::new($false))
 
 Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-core-bridge:local', $coreContext)
 Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-mcp:local', $mcpContext)
+Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-agentteams-binding-controller:local', $bindingControllerContext)
+Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-higress-binding-publisher:local', $bindingPublisherContext)
 $probeDockerfile = Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\Dockerfile.network-probe'
 Invoke-P005V122CoreNative -FilePath $docker -Arguments @('build', '--pull=false', '-t', 'haowork-network-probe:local', '-f', $probeDockerfile, $imageRoot)
-Invoke-P005V122CoreNative -FilePath $kind -Arguments @('load', 'docker-image', '--name', $ClusterName, 'haowork-core-bridge:local', 'haowork-mcp:local', 'haowork-network-probe:local')
+Invoke-P005V122CoreNative -FilePath $kind -Arguments @('load', 'docker-image', '--name', $ClusterName, 'haowork-core-bridge:local', 'haowork-mcp:local', 'haowork-agentteams-binding-controller:local', 'haowork-higress-binding-publisher:local', 'haowork-network-probe:local')
 
 $bridgeToken = New-P005V122RandomHex
 $model = [string](Get-Item -Path 'Env:HAOWORK_P005_PUBLIC_LLM_MODEL' -ErrorAction SilentlyContinue).Value
@@ -196,7 +247,9 @@ if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MANAGER_RUNTIME' }
 $managerImages = @($managerPod.spec.containers | Where-Object { [string]$_.name -ceq 'worker' -and [string]$_.image -ceq $lockedManagerImage } | ForEach-Object { [string]$_.image })
 if ($managerImages.Count -ne 1) { throw 'BLOCKED_MANAGER_IMAGE' }
 $managerImage = $managerImages[0]
-$managerBuckets = @($managerPod.spec.containers[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_FS_BUCKET' } | ForEach-Object { [string]$_.value })
+$managerWorker = @($managerPod.spec.containers | Where-Object { [string]$_.name -ceq 'worker' })
+if ($managerWorker.Count -ne 1) { throw 'BLOCKED_MANAGER_WORKER_CONTAINER' }
+$managerBuckets = @($managerWorker[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_FS_BUCKET' } | ForEach-Object { [string]$_.value })
 if ($managerBuckets.Count -ne 1 -or $managerBuckets[0] -notmatch '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$') { throw 'BLOCKED_MANAGER_ARTIFACT_BUCKET' }
 $managerBucket = $managerBuckets[0]
 $appServiceTokenEncoded = ([string](& $kubectl get secret haowork-public-agentteams-runtime-env -n haowork-public -o 'jsonpath={.data.AGENTTEAMS_MATRIX_APPSERVICE_AS_TOKEN}')).Trim()
@@ -220,75 +273,113 @@ $runtimeEnvironmentHandle = Write-P005V122SecretFile -Path $runtimeEnvironmentPa
     $appServiceTokenEncoded = $null
 }
 
-$gatewayKeyEncoded = (& $kubectl get secret agentteams-creds-default -n haowork-public -o 'jsonpath={.data.WORKER_GATEWAY_KEY}').Trim()
-$managerPrincipal = (& $kubectl get manager default -n haowork-public -o 'jsonpath={.status.matrixUserID}').Trim()
-if ([string]::IsNullOrWhiteSpace($gatewayKeyEncoded) -or [string]::IsNullOrWhiteSpace($managerPrincipal)) { throw 'BLOCKED_MCP_RUNTIME_BINDING' }
-$gatewayKey = ConvertFrom-P005V122Base64 -Value $gatewayKeyEncoded
-$sha = [Security.Cryptography.SHA256]::Create()
-try { $credentialDigest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($gatewayKey)))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
-$bindingsPath = Join-Path $runtimeRoot 'bindings.json'
-$bindingDocument = @{ bindings = @(@{
-    consumer_name = 'manager'; credential_sha256 = $credentialDigest
-    principal = @{ logical_actor_id = 'AGT-P005-MANAGER'; runtime_principal_id = $managerPrincipal; environment_id = 'public'; agentteams_instance_id = 'default'; binding_revision = 1 }
-}) }
-[IO.File]::WriteAllText($bindingsPath, ($bindingDocument | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
-$bindingSecret = & $kubectl create secret generic haowork-mcp-runtime-bindings -n haowork-public --from-file=bindings.json=$bindingsPath --dry-run=client -o yaml
-if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MCP_RUNTIME_BINDING' }
-$bindingSecret | & $kubectl apply -f - | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MCP_RUNTIME_BINDING' }
+$internalBridgeToken = New-P005V122RandomHex
+$internalModel = [string](Get-Item -Path 'Env:HAOWORK_P005_INTERNAL_LLM_MODEL' -ErrorAction SilentlyContinue).Value
+if ([string]::IsNullOrWhiteSpace($internalModel) -or $internalModel.Contains("`n") -or $internalModel.Contains("`r")) { throw 'BLOCKED_RUNTIME_MODEL_INTERNAL' }
+$internalManagerPod = & $kubectl get pod haowork-internal-agentteams-manager -n haowork-internal -o json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_MANAGER_RUNTIME_INTERNAL' }
+$internalManagerImages = @($internalManagerPod.spec.containers | Where-Object { [string]$_.name -ceq 'worker' -and [string]$_.image -ceq $lockedManagerImage } | ForEach-Object { [string]$_.image })
+if ($internalManagerImages.Count -ne 1) { throw 'BLOCKED_MANAGER_IMAGE_INTERNAL' }
+$internalManagerWorker = @($internalManagerPod.spec.containers | Where-Object { [string]$_.name -ceq 'worker' })
+if ($internalManagerWorker.Count -ne 1) { throw 'BLOCKED_MANAGER_WORKER_CONTAINER_INTERNAL' }
+$internalManagerBuckets = @($internalManagerWorker[0].env | Where-Object { $_.name -eq 'AGENTTEAMS_FS_BUCKET' } | ForEach-Object { [string]$_.value })
+if ($internalManagerBuckets.Count -ne 1 -or $internalManagerBuckets[0] -notmatch '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$') { throw 'BLOCKED_MANAGER_ARTIFACT_BUCKET_INTERNAL' }
+$internalAppServiceTokenEncoded = ([string](& $kubectl get secret haowork-internal-agentteams-runtime-env -n haowork-internal -o 'jsonpath={.data.AGENTTEAMS_MATRIX_APPSERVICE_AS_TOKEN}')).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($internalAppServiceTokenEncoded)) { throw 'BLOCKED_MATRIX_APPSERVICE_TOKEN_INTERNAL' }
+$internalAppServiceToken = ConvertFrom-P005V122AppServiceToken -EncodedValue $internalAppServiceTokenEncoded
+$internalEnvironmentPath = Join-Path $runtimeRoot 'core-bridge-internal.env'
+$internalEnvironmentHandle = $null
+try {
+    $internalEnvironmentHandle = Write-P005V122SecretFile -Path $internalEnvironmentPath -Lines @("token=$internalBridgeToken", "model=$internalModel", "manager-image=$($internalManagerImages[0])", "bucket=$($internalManagerBuckets[0])", "matrix-appservice-as-token=$internalAppServiceToken")
+    $internalRuntimeSecret = & $kubectl create secret generic haowork-core-bridge-runtime -n haowork-internal --from-env-file=$internalEnvironmentPath --dry-run=client -o yaml
+    if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET_INTERNAL' }
+    $internalRuntimeSecret | & $kubectl apply -f - | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_CORE_BRIDGE_SECRET_INTERNAL' }
+} finally {
+    if ($null -ne $internalEnvironmentHandle) { $internalEnvironmentHandle.Dispose() }
+    if (Test-Path -LiteralPath $internalEnvironmentPath) {
+        try { Remove-Item -LiteralPath $internalEnvironmentPath -Force -ErrorAction Stop } catch { throw 'BLOCKED_CORE_BRIDGE_SECRET_CLEANUP_INTERNAL' }
+    }
+    $internalAppServiceToken = $null
+    $internalAppServiceTokenEncoded = $null
+}
 
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-n', 'haowork-public', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-core-bridge.yaml'))
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-n', 'haowork-public', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-mcp.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-n', 'haowork-public', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-binding-controller.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-higress-binding-publisher.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-core-bridge-internal.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-mcp-internal.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-binding-controller-internal.yaml'))
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-higress-binding-publisher-internal.yaml'))
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-network-probe-public.yaml'))
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('apply', '-f', (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\haowork-network-probe-internal.yaml'))
-Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'restart', 'deployment/haowork-core-bridge', '-n', 'haowork-public')
-Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'restart', 'deployment/haowork-mcp', '-n', 'haowork-public')
+foreach ($namespace in @('haowork-public', 'haowork-internal')) {
+    foreach ($deployment in @(
+        'haowork-core-bridge',
+        'haowork-mcp',
+        'haowork-agentteams-binding-controller',
+        'haowork-higress-binding-publisher',
+        'haowork-network-probe'
+    )) {
+        Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'restart', "deployment/$deployment", '-n', $namespace)
+        Wait-P005V122LocalDeploymentObserved -Kubectl $kubectl -Namespace $namespace -Deployment $deployment
+    }
+}
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-core-bridge', '-n', 'haowork-public', '--timeout=180s')
-Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-mcp', '-n', 'haowork-public', '--timeout=180s')
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-core-bridge', '-n', 'haowork-internal', '--timeout=180s')
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-agentteams-binding-controller', '-n', 'haowork-public', '--timeout=180s')
+Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-agentteams-binding-controller', '-n', 'haowork-internal', '--timeout=180s')
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-network-probe', '-n', 'haowork-public', '--timeout=180s')
 Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-network-probe', '-n', 'haowork-internal', '--timeout=180s')
 
-$consoleSecret = & $kubectl get secret higress-console -n haowork-public -o json
-if ($LASTEXITCODE -ne 0) { throw 'BLOCKED_HIGRESS_CONSOLE_SECRET' }
-$consoleData = ($consoleSecret | ConvertFrom-Json).data
-$consoleUsername = ConvertFrom-P005V122Base64 -Value ([string]$consoleData.adminUsername)
-$consolePassword = ConvertFrom-P005V122Base64 -Value ([string]$consoleData.adminPassword)
-$portForwardOut = Join-Path $runtimeRoot 'higress-port-forward.out.log'
-$portForwardErr = Join-Path $runtimeRoot 'higress-port-forward.err.log'
-$portForward = Start-Process -FilePath $kubectl -ArgumentList @('port-forward', '-n', 'haowork-public', 'service/higress-console', '18083:8080') -PassThru -WindowStyle Hidden -RedirectStandardOutput $portForwardOut -RedirectStandardError $portForwardErr
-try {
-    $ready = $false
-    for ($attempt = 0; $attempt -lt 40; $attempt++) {
-        try {
-            $client = New-Object Net.Sockets.TcpClient
-            $client.Connect('127.0.0.1', 18083)
-            $client.Dispose()
-            $ready = $true
-            break
-        } catch { Start-Sleep -Milliseconds 250 }
+foreach ($zone in @(
+    [pscustomobject]@{ Name = 'public'; Namespace = 'haowork-public'; Port = 18083 },
+    [pscustomobject]@{ Name = 'internal'; Namespace = 'haowork-internal'; Port = 18084 }
+)) {
+    $consoleSecret = & $kubectl get secret higress-console -n $zone.Namespace -o json
+    if ($LASTEXITCODE -ne 0) { throw "BLOCKED_HIGRESS_CONSOLE_SECRET_$($zone.Name.ToUpperInvariant())" }
+    $consoleData = ($consoleSecret | ConvertFrom-Json).data
+    $consoleUsername = ConvertFrom-P005V122Base64 -Value ([string]$consoleData.adminUsername)
+    $consolePassword = ConvertFrom-P005V122Base64 -Value ([string]$consoleData.adminPassword)
+    $portForwardOut = Join-Path $runtimeRoot "higress-$($zone.Name)-port-forward.out.log"
+    $portForwardErr = Join-Path $runtimeRoot "higress-$($zone.Name)-port-forward.err.log"
+    $portForward = Start-Process -FilePath $kubectl -ArgumentList @('port-forward', '-n', $zone.Namespace, 'service/higress-console', "$($zone.Port):8080") -PassThru -WindowStyle Hidden -RedirectStandardOutput $portForwardOut -RedirectStandardError $portForwardErr
+    try {
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            try {
+                $client = New-Object Net.Sockets.TcpClient
+                $client.Connect('127.0.0.1', $zone.Port)
+                $client.Dispose()
+                $ready = $true
+                break
+            } catch { Start-Sleep -Milliseconds 250 }
+        }
+        if (-not $ready) { throw "BLOCKED_HIGRESS_CONSOLE_PORT_FORWARD_$($zone.Name.ToUpperInvariant())" }
+        $baseURL = "http://127.0.0.1:$($zone.Port)"
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        Invoke-P005V122HigressJSON -BaseURL $baseURL -Method POST -Path '/session/login' -Body @{ username = $consoleUsername; password = $consolePassword } -Session $session | Out-Null
+        $sources = Invoke-P005V122HigressJSON -BaseURL $baseURL -Method GET -Path '/v1/service-sources' -Body $null -Session $session
+        $sourceExists = @($sources.data | Where-Object { $_.name -eq 'haowork-mcp-backend' }).Count -eq 1
+        if (-not $sourceExists) {
+            Invoke-P005V122HigressJSON -BaseURL $baseURL -Method POST -Path '/v1/service-sources' -Body @{ type = 'dns'; name = 'haowork-mcp-backend'; domain = "haowork-mcp.$($zone.Namespace).svc.cluster.local"; port = 8080; protocol = 'http' } -Session $session | Out-Null
+        }
+        $mcpBody = @{
+            name = 'haowork-mcp'; mcpServerName = 'haowork-mcp'; description = 'Haowork governed skills'; type = 'DIRECT_ROUTE'
+            domains = @('aigw-local.agentteams.io')
+            services = @(@{ name = 'haowork-mcp-backend.dns'; port = 8080; weight = 100 })
+            consumerAuthInfo = @{ type = 'key-auth'; enable = $true; allowedConsumers = @() }
+            directRouteConfig = @{ path = '/mcp'; transportType = 'streamable' }
+        }
+        Invoke-P005V122HigressJSON -BaseURL $baseURL -Method PUT -Path '/v1/mcpServer' -Body $mcpBody -Session $session | Out-Null
+    } finally {
+        if ($null -ne $portForward -and -not $portForward.HasExited) { Stop-Process -Id $portForward.Id -Force }
+        $consolePassword = $null
     }
-    if (-not $ready) { throw 'BLOCKED_HIGRESS_CONSOLE_PORT_FORWARD' }
-    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-    Invoke-P005V122HigressJSON -Method POST -Path '/session/login' -Body @{ username = $consoleUsername; password = $consolePassword } -Session $session | Out-Null
-    $sources = Invoke-P005V122HigressJSON -Method GET -Path '/v1/service-sources' -Body $null -Session $session
-    $sourceExists = @($sources.data | Where-Object { $_.name -eq 'haowork-mcp-backend' }).Count -eq 1
-    if (-not $sourceExists) {
-        Invoke-P005V122HigressJSON -Method POST -Path '/v1/service-sources' -Body @{ type = 'dns'; name = 'haowork-mcp-backend'; domain = 'haowork-mcp.haowork-public.svc.cluster.local'; port = 8080; protocol = 'http' } -Session $session | Out-Null
-    }
-    $mcpBody = @{
-        name = 'haowork-mcp'; mcpServerName = 'haowork-mcp'; description = 'Haowork governed skills'; type = 'DIRECT_ROUTE'
-        domains = @('aigw-local.agentteams.io')
-        services = @(@{ name = 'haowork-mcp-backend.dns'; port = 8080; weight = 100 })
-        consumerAuthInfo = @{ type = 'key-auth'; enable = $true; allowedConsumers = @('manager') }
-        directRouteConfig = @{ path = '/mcp'; transportType = 'streamable' }
-    }
-    Invoke-P005V122HigressJSON -Method PUT -Path '/v1/mcpServer' -Body $mcpBody -Session $session | Out-Null
-    Invoke-P005V122HigressJSON -Method PUT -Path '/v1/mcpServer/consumers' -Body @{ mcpServerName = 'haowork-mcp'; consumers = @('manager') } -Session $session | Out-Null
-} finally {
-    if ($null -ne $portForward -and -not $portForward.HasExited) { Stop-Process -Id $portForward.Id -Force }
 }
 
-$coreReady = (& $kubectl get deployment haowork-core-bridge -n haowork-public -o 'jsonpath={.status.readyReplicas}').Trim()
-$mcpReady = (& $kubectl get deployment haowork-mcp -n haowork-public -o 'jsonpath={.status.readyReplicas}').Trim()
-if ($coreReady -ne '1' -or $mcpReady -ne '1') { throw 'BLOCKED_HAOWORK_CORE_BRIDGE' }
-Write-Host 'P0-05 Core Bridge and governed MCP deployment ready'
+foreach ($zone in @('haowork-public', 'haowork-internal')) {
+    Invoke-P005V122CoreNative -FilePath $kubectl -Arguments @('rollout', 'status', 'deployment/haowork-higress-binding-publisher', '-n', $zone, '--timeout=180s')
+}
+Write-Host 'P0-05 Core Bridge and structured receipt controllers ready; MCP becomes ready after Delivery Leader binding publication'
