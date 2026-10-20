@@ -25,6 +25,7 @@ func DefaultCommands() []CommandFactory {
 		NewOpenCommand,
 		NewStopCommand,
 		NewTeamCommand,
+		NewTeamAICommand,
 		NewPlanCommand,
 		NewApproveCommand,
 		NewRunCommand,
