@@ -11,6 +11,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_windows_acl_contract:
+        description: Run strict Windows ACL contract on the controlled self-hosted runner
+        required: true
+        type: boolean
+        default: false
       cluster_name:
         description: Dedicated Kind cluster name owned by this run
         required: true
@@ -51,6 +56,8 @@ jobs:
       - name: Validate Windows AgentTeams contracts
         if: runner.os == 'Windows'
         shell: powershell
+        env:
+          HAOWORK_STRICT_WINDOWS_ACL: 'false'
         run: |
           $tests = @(
             'p0-05-v122-common.tests.ps1',
@@ -145,6 +152,7 @@ jobs:
             if ([string]::IsNullOrWhiteSpace($value) -or $value -match '[\r\n]') { throw "BLOCKED_RUNNER_LOCAL_ENV:$name" }
             Write-Output "::add-mask::$value"
           }
+
           foreach ($name in $required[5..9]) {
             $value = [Environment]::GetEnvironmentVariable($name, 'Process')
             if ([string]::IsNullOrWhiteSpace($value) -or $value -match '[\r\n]') { throw "BLOCKED_INTERNAL_ENV:$name" }
@@ -166,3 +174,21 @@ jobs:
         env:
           HAOWORK_E2E_CLUSTER_NAME: ${{ inputs.cluster_name }}
         run: .\scripts\p0-05-v122-down.ps1 -ClusterName $env:HAOWORK_E2E_CLUSTER_NAME -DeleteCluster
+
+  windows-acl-contract:
+    name: strict Windows ACL contract (self-hosted)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_acl_contract }}
+    runs-on: [self-hosted, windows, x64, haowork-agentteams-v122]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate controlled runner boundary
+        shell: powershell
+        run: |
+          if ([IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE) -match '^[Cc]:\\') { throw 'BLOCKED_C_DRIVE_WORKSPACE' }
+          if ($env:RUNNER_ENVIRONMENT -eq 'github-hosted') { throw 'BLOCKED_HOSTED_RUNNER' }
+      - name: Validate strict Windows ACL contract
+        shell: powershell
+        env:
+          HAOWORK_STRICT_WINDOWS_ACL: 'true'
+        run: .\scripts\p0-05-v122-cluster-test.tests.ps1

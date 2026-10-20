@@ -98,6 +98,10 @@ $internalDisposeIndex = $coreBridgeText.IndexOf('if ($null -ne $internalEnvironm
 $internalRemoveIndex = $coreBridgeText.IndexOf("throw 'BLOCKED_CORE_BRIDGE_SECRET_CLEANUP_INTERNAL'", $internalDisposeIndex, [StringComparison]::Ordinal)
 Assert-True ($internalDisposeIndex -ge 0 -and $internalRemoveIndex -gt $internalDisposeIndex) 'Core Bridge must fail closed if internal temporary Secret cleanup fails'
 if ($env:OS -eq 'Windows_NT' -and $PSVersionTable.PSEdition -eq 'Desktop') {
+	$hostedWindowsRunner = $env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted'
+	if ($hostedWindowsRunner -and $env:HAOWORK_STRICT_WINDOWS_ACL -ne 'true') {
+		Write-Output 'NOT_RUN_CORE_BRIDGE_SECRET_ACL: strict ACL validation requires a controlled self-hosted Windows runner'
+	} else {
     $coreMarker = '$worktreeRoot = Split-Path -Parent $PSScriptRoot'
     $coreMarkerIndex = $coreBridgeText.IndexOf($coreMarker, [StringComparison]::Ordinal)
     Assert-True ($coreMarkerIndex -gt 0) 'Core Bridge script must retain a function-only loading boundary'
@@ -119,6 +123,7 @@ if ($env:OS -eq 'Windows_NT' -and $PSVersionTable.PSEdition -eq 'Desktop') {
         if ($null -ne $handle) { $handle.Dispose() }
         Remove-Item -LiteralPath $secretFixture -Force -ErrorAction SilentlyContinue
     }
+	}
 }
 foreach ($lifecycleText in @($upText, $downText)) {
     Assert-True (-not $lifecycleText.Contains('BrowserPortForward') -and -not $lifecycleText.Contains('process_start_time_utc')) 'deployment lifecycle must not retain persistent browser process management'
