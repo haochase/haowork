@@ -1142,3 +1142,14 @@ func stringMapAny(source map[string]string) map[string]any {
 	}
 	return result
 }
+
+func TestSamePathAcceptsWindowsLongPathPrefix(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path normalization contract")
+	}
+	path := filepath.Join(t.TempDir(), "mcp-bindings.json")
+	longPath := `\\?\` + path
+	if !samePath(path, longPath) {
+		t.Fatalf("samePath(%q, %q) = false, want true", path, longPath)
+	}
+}

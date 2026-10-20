@@ -1003,10 +1003,25 @@ func safeExistingDirectory(path string) error {
 }
 
 func samePath(left, right string) bool {
+	left, leftErr := filepath.Abs(normalizeWindowsPathPrefix(left))
+	right, rightErr := filepath.Abs(normalizeWindowsPathPrefix(right))
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
 	if filepath.Separator == '\\' {
 		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
 	}
 	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+func normalizeWindowsPathPrefix(value string) string {
+	if filepath.Separator != '\\' {
+		return value
+	}
+	if strings.HasPrefix(value, `\\?\UNC\`) {
+		return `\\` + strings.TrimPrefix(value, `\\?\UNC\`)
+	}
+	return strings.TrimPrefix(value, `\\?\`)
 }
 
 func sha256Hex(value string) bool {
