@@ -34,6 +34,20 @@ English version | [中文版](README_cn.md)
 > remain outside this public repository. The A/B/C/D benchmark remains unverified; missing dependencies still
 > produce explicit `BLOCKED_*` results rather than simulated success.
 
+## TeamAI compatibility prototype
+
+TeamAI distributes team AI assets; Haowork records requirements, responsibility, approvals, evidence, and SCM
+relationships; AgentTeams orchestrates execution; Git stores source history and provides read-only remote observations.
+This is a compatibility prototype for Tencent `teamai-cli@0.27.0`, not a partnership, joint development, or endorsement.
+Local integration contracts passed. Real TeamAI distribution, remote GitHub Actions, and the TeamAI dual-namespace
+integration remain `NOT_RUN`; one immutable Binding/Mission/Receipt chain remains `NOT_PROVEN`. Earlier AgentTeams
+validation does not establish those new integration claims.
+
+Start with the [sanitized team template](examples/teamai-haowork-team/docs/onboarding.md),
+[five-platform scenario](examples/teamai-haowork-demo/README.md), [integration guide](docs/teamai-integration.md),
+[architecture](docs/teamai-architecture.md), and [demo script](docs/teamai-demo-script.md).
+The online portal remains independently deployed; its source, tunnel deployment, and runtime configuration are excluded.
+
 ## 🎬 Online Read-only Demo
 
 > [!NOTE]

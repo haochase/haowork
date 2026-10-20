@@ -31,6 +31,19 @@
 > 网络隔离、Core 健康、L3 审批和运行身份重绑定均通过；原始制品、主机信息与凭据不进入公开仓库。
 > A/B/C/D 基准仍未验证；依赖缺失时继续返回明确的 `BLOCKED_*`，不会用模拟结果冒充成功。
 
+## TeamAI 兼容原型
+
+TeamAI 分发团队 AI 资产；Haowork 记录需求、责任、审批、证据与 SCM 关联；AgentTeams 编排执行；
+Git 保存源码历史并提供远端只读观察。这是针对腾讯 `teamai-cli@0.27.0` 的兼容原型，不代表腾讯合作、
+联合开发或官方背书。本地集成合同已通过；真实 TeamAI 分发、远端 GitHub Actions 和本次 TeamAI
+双命名空间联调仍为 `NOT_RUN`，同一 Binding/Mission/Receipt 的不可变链仍为 `NOT_PROVEN`。
+此前 AgentTeams 验证不能替代这些新增集成的验收。
+
+入口：[脱敏团队资产模板](examples/teamai-haowork-team/docs/onboarding.md)、
+[五端使用样例](examples/teamai-haowork-demo/README.md)、[集成说明](docs/teamai-integration.md)、
+[架构与失败路径](docs/teamai-architecture.md)、[演示脚本](docs/teamai-demo-script.md)。
+现有在线门户独立部署，不将其源码、隧道部署或运行配置引入本仓。
+
 ## 🎬 在线只读演示
 
 > [!NOTE]

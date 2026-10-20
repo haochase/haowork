@@ -1,6 +1,9 @@
 # Local design and browser-companion state
 .superpowers/
 .worktrees/
+.cache/
+.demo-runtime/
+.tools/
 
 # Local research, tool state, and external reference material
 .codex/
