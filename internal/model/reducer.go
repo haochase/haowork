@@ -52,6 +52,10 @@ func Reduce(events []Event) (ProjectState, error) {
 			err = applyRuntimeUnbound(&state, event)
 		case "capsule.imported":
 			err = applyCapsuleImported(&state, event)
+		case "teamai.bound":
+			err = applyTeamAIBound(&state, event)
+		case "teamai.assets.verified":
+			err = applyTeamAIAssetsVerified(&state, event)
 		case "mission.issued":
 			err = applyMissionIssued(&state, event)
 		case "mission.invalidated":
@@ -177,6 +181,7 @@ func applyProjectInitialized(state *ProjectState, event Event) error {
 	state.Attributions = make(map[string]ChangeAttribution)
 	state.Agents = make(map[string]LogicalAgent)
 	state.RuntimeBindings = make(map[string][]RuntimeBinding)
+	state.TeamAIBindings = make(map[string]TeamAIBinding)
 	state.Missions = make(map[string]MissionEnvelope)
 	state.Approvals = make(map[string]ApprovalRequest)
 	state.SCMRepositories = make(map[string]SCMRepository)

@@ -1,0 +1,54 @@
+{
+  "schema_version": "1",
+  "fictional": true,
+  "version": "demo-1",
+  "goal": "五端支付结果、取消和超时语义一致且治理过程可审查",
+  "requirement": {
+    "id": "REQ-DEMO",
+    "root_cause": "虚构历史客户纸舟商店要求超时后仍核对最终支付结果，避免重复扣款；当前调用链没有引用不能证明此约束可删除"
+  },
+  "owners": ["product-owner", "sdk-developer", "test-lead", "docs-maintainer"],
+  "scope": ["project/docs", "project/adapters"],
+  "platforms": [
+    {"id": "web", "adapter": "project/adapters/web/README.md", "point": "页面关闭与重定向恢复"},
+    {"id": "windows", "adapter": "project/adapters/windows/README.md", "point": "窗口关闭与协议回调"},
+    {"id": "macos", "adapter": "project/adapters/macos/README.md", "point": "应用切换与 URL 回调"},
+    {"id": "android", "adapter": "project/adapters/android/README.md", "point": "Activity 重建与返回键"},
+    {"id": "ios", "adapter": "project/adapters/ios/README.md", "point": "Scene 恢复与回调去重"}
+  ],
+  "tasks": [
+    {"id": "TASK-CONTRACT", "owner": "sdk-developer", "decisions": ["DEC-TIMEOUT"], "done_when": "五端覆盖取消、迟到结果、超时重试、重复回调且人工验收", "checks": ["cancel", "late-result", "timeout-retry", "duplicate-callback"]},
+    {"id": "TASK-REVIEW", "owner": "test-lead", "decisions": ["DEC-TIMEOUT"], "done_when": "测试证据绑定正确版本并由 Human 验收", "checks": ["artifact-digest", "human-acceptance"]},
+    {"id": "TASK-DOCS", "owner": "docs-maintainer", "decisions": ["DEC-TIMEOUT"], "done_when": "产品负责人复核历史需求保留原因", "checks": ["root-cause-review"]}
+  ],
+  "decisions": [{"id": "DEC-TIMEOUT", "owner": "product-owner", "tasks": ["TASK-CONTRACT", "TASK-REVIEW", "TASK-DOCS"], "rationale": "超时表示本地等待结束，不能直接宣称交易失败；取消不等于退款；删除约束须重新审批需求"}],
+  "gates": {"report_can_complete": false, "merged_pr_can_complete": false, "human_acceptance_required": true, "report_result": "candidate"},
+  "teamai_binding": {
+    "selection": "Human Owner supplies only the binding ID to mission issue",
+    "ready_required": true,
+    "source_snapshot": ["binding_id", "team_repo", "team_revision", "asset_digest"],
+    "legacy_mission_source": null
+  },
+  "mission_receipt_binding": {
+    "local_contract": "TestTeamAIMissionReceiptBindingReplaysOneSnapshot",
+    "source_flow": ["Ready TeamAI binding", "Mission canonical hash", "Assignment", "candidate Receipt", "Trace replay"],
+    "failure_closed": ["non-Ready binding", "Assignment/Receipt source mismatch"],
+    "report_metadata": "extra teamai_source is stripped before the real adapter; the stored source is derived from Assignment",
+    "external_e2e": "NOT_RUN"
+  },
+  "runtime_status": "NOT_RUN",
+  "checks": ["static-contract", "asset-bytes", "leader-identity", "artifact-digest", "evidence", "human-acceptance"],
+  "constructed_sequence": {
+    "status": "NOT_RUN",
+    "events": ["t0 创建虚构订单，开始等待", "t1 用户取消界面，保留待核对交易标识", "t2 本地等待超时，不标记最终交易失败", "t3 平台恢复后收到迟到成功及重复成功回调"],
+    "recovery": "使用同一虚构交易标识查询最终状态，幂等合并重复结果；不创建第二笔扣款，不自动退款",
+    "acceptance": ["仅一条最终结果记录", "取消与等待超时作为独立交互事实保留", "迟到成功可追溯到原订单", "恢复前最终状态为待核对而非失败", "重复回调不重复通知或扣款"],
+    "platform_recovery": {
+      "web": "关闭页面后重开，恢复原交易标识并对账重定向结果",
+      "windows": "关闭窗口后由协议回调唤起，恢复原交易标识并去重",
+      "macos": "切换应用后从 URL 回调恢复，核对原交易与重复链接",
+      "android": "返回键离开后 Activity 重建，恢复保存的原交易标识再查询",
+      "ios": "Scene 挂起后重新激活，恢复原交易并合并迟到回调"
+    }
+  }
+}

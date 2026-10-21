@@ -1,0 +1,16 @@
+{
+  "team": "haowork-example-team",
+  "description": "可复制的 Haowork 治理团队资产模板；不是生产配置或联合开发声明",
+  "repo": "https://example.invalid/replace-owner/replace-team-assets.git",
+  "provider": "git",
+  "usageReport": false,
+  "sharing": {
+    "rules": { "enforced": ["haowork-boundaries", "evidence-first-review"] },
+    "env": { "injectShellProfile": false },
+    "hooks": { "autoApply": false, "requireTeamScripts": true },
+    "mcp": { "autoApply": false },
+    "recall": { "enabled": false },
+    "contributeHint": { "enabled": false },
+    "webhooks": { "enabled": false, "endpoints": [] }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "TeamAI public contracts",
+  "on": { "pull_request": {}, "push": { "branches": ["main"] } },
+  "permissions": { "contents": "read" },
+  "jobs": {
+    "contract": {
+      "runs-on": "${{ matrix.os }}",
+      "timeout-minutes": 15,
+      "strategy": { "fail-fast": false, "matrix": { "os": ["windows-latest", "ubuntu-latest"] } },
+      "steps": [
+        { "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" },
+        { "uses": "actions/setup-node@v5", "with": { "node-version": "24.14.0" } },
+        { "uses": "actions/setup-go@v6", "with": { "go-version": "1.26.5" } },
+        { "run": "go test ./internal/teamai ./internal/model ./internal/app ./internal/cli -run 'TestPublicTeamAI|TestTeamAI' -count=1" },
+        { "run": "node examples/teamai-haowork-team/test-validators.mjs" },
+        { "run": "node examples/teamai-haowork-team/validate-assets.mjs" },
+        { "run": "node examples/teamai-haowork-demo/scripts/test-demo.mjs" },
+        { "run": "node examples/teamai-haowork-demo/scripts/validate-demo.mjs" },
+        { "run": "node --test scripts/check-teamai-public.test.mjs" }
+      ]
+    }
+  }
+}

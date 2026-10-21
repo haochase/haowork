@@ -275,6 +275,7 @@ type ProjectState struct {
 	Attributions       map[string]ChangeAttribution         `json:"attributions"`
 	Agents             map[string]LogicalAgent              `json:"agents"`
 	RuntimeBindings    map[string][]RuntimeBinding          `json:"runtime_bindings"`
+	TeamAIBindings     map[string]TeamAIBinding             `json:"teamai_bindings"`
 	Missions           map[string]MissionEnvelope           `json:"missions"`
 	Approvals          map[string]ApprovalRequest           `json:"approvals"`
 	SCMRepositories    map[string]SCMRepository             `json:"scm_repositories"`
