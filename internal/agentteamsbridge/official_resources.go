@@ -221,7 +221,10 @@ func officialMCPServers(config OfficialResourceConfig) []any {
 func missionSkillNames(envelope model.MissionEnvelope) []any {
 	values := make([]string, 0, len(envelope.AllowedSkills))
 	for _, grant := range envelope.AllowedSkills {
-		values = append(values, strings.TrimSpace(grant.Name))
+		name := strings.TrimSpace(grant.Name)
+		if name != "submit_execution_report" {
+			values = append(values, name)
+		}
 	}
 	return stringsToAny(stableUniqueStrings(values))
 }

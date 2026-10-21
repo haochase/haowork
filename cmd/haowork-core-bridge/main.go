@@ -77,6 +77,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	instanceLock, err := corebridge.AcquireInstanceLock(config.stateRoot)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer instanceLock.Close()
 	state, err := corebridge.OpenState(config.stateRoot)
 	if err != nil {
 		log.Fatal(err)

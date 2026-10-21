@@ -1,0 +1,13 @@
+name: submit_execution_report
+version: 1.0.0
+input_schema: '{"type":"object","additionalProperties":false,"properties":{"assignment_id":{"type":"string","pattern":"^ASN-[0-9a-f]{32}$"},"status":{"type":"string","enum":["succeeded","failed","blocked"]},"summary_sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},"artifacts":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"properties":{"kind":{"type":"string","minLength":1},"uri":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},"environment_id":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,62}$"},"size":{"type":"integer","minimum":0,"maximum":16777216}},"required":["kind","uri","sha256","environment_id","size"]}},"checks":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":1},"status":{"type":"string","enum":["passed","failed","blocked"]},"evidence_sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"}},"required":["name","status","evidence_sha256"]}}},"required":["assignment_id","status","summary_sha256","artifacts","checks"]}'
+output_schema: '{"type":"object","additionalProperties":false,"properties":{"receipt_id":{"type":"string"},"assignment_id":{"type":"string"},"accepted_as_candidate":{"type":"boolean"},"receipt_sha256":{"type":"string"}},"required":["receipt_id","assignment_id","accepted_as_candidate","receipt_sha256"]}'
+risk: L1
+allowed_functions: [delivery_leader]
+required_context: true
+required_lease: true
+supported_environments: [public, internal]
+adapter: core.submit_execution_report
+timeout: 30s
+retry_policy: idempotent_same_payload
+evidence_policy: append_only_receipt

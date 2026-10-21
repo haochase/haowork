@@ -62,6 +62,43 @@ func TestS3ArtifactRejectsCrossEnvironmentKeyAndResponseLossDivergence(t *testin
 	}
 }
 
+func TestS3ArtifactCanonicalURIRejectsForeignBucketAndEncodedKeys(t *testing.T) {
+	client := &memoryS3Client{objects: map[string][]byte{}}
+	store, err := agentteamsbridge.NewS3ArtifactStoreWithClient(agentteamsbridge.S3ArtifactStoreConfig{
+		Bucket: "haowork-public-artifacts", EnvironmentID: "public", MissionID: "MSN-001", MaxBytes: 1024,
+	}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "environments/public/missions/MSN-001/artifacts/" + strings.Repeat("a", 64)
+	uri, err := store.ArtifactURI(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantURI := "s3://haowork-public-artifacts/" + key
+	if uri != wantURI {
+		t.Fatalf("ArtifactURI()=%q, want %q", uri, wantURI)
+	}
+	resolved, err := store.ArtifactKey(uri)
+	if err != nil || resolved != key {
+		t.Fatalf("ArtifactKey()=%q, err=%v", resolved, err)
+	}
+	invalid := []string{
+		"s3://other-bucket/" + key,
+		"s3://haowork-public-artifacts/environments/internal/missions/MSN-001/artifacts/" + strings.Repeat("a", 64),
+		"s3://haowork-public-artifacts/environments/public/missions/MSN-001/artifacts/%61" + strings.Repeat("a", 63),
+		"s3://haowork-public-artifacts/environments/public/missions/MSN-001/artifacts/%2e%2e%2fprivate",
+	}
+	for _, candidate := range invalid {
+		if _, err := store.ArtifactKey(candidate); err == nil {
+			t.Fatalf("ArtifactKey accepted %q", candidate)
+		}
+	}
+	if client.statCalls != 0 || client.getCalls != 0 {
+		t.Fatalf("URI validation touched S3: stat=%d get=%d", client.statCalls, client.getCalls)
+	}
+}
+
 type memoryS3Client struct {
 	objects             map[string][]byte
 	putCalls, getCalls  int

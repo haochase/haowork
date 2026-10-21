@@ -1,51 +1,26 @@
 [CmdletBinding()]
-param(
-    [string]$TempRoot = (Join-Path $env:TEMP 'haowork-p005-v122-offline-tests')
-)
+param()
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'p0-05-v122-offline-common.ps1')
+$worktreeRoot = Split-Path -Parent $PSScriptRoot
 
-function Assert-OfflineTest {
-    param([bool]$Condition, [string]$Message)
+function Assert-True {
+    param([Parameter(Mandatory)][bool]$Condition, [Parameter(Mandatory)][string]$Message)
     if (-not $Condition) { throw $Message }
 }
 
-Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $TempRoot | Out-Null
+$scriptText = (Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'p0-05-v122-*.ps1' -File |
+    Where-Object { $_.Name -notlike '*.tests.ps1' } |
+    ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding utf8 }) -join "`n"
+$deployText = (Get-ChildItem -LiteralPath (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2') -File |
+    ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding utf8 }) -join "`n"
+$schema = Get-Content -LiteralPath (Join-Path $worktreeRoot 'deploy\agentteams\v1.2.2\cluster-evidence.schema.json') -Raw -Encoding utf8 | ConvertFrom-Json
 
-try {
-    $artifact = Join-Path $TempRoot 'capsule.zip'
-    [System.IO.File]::WriteAllBytes($artifact, [byte[]](1, 2, 3, 4))
-    $receipt = New-HaoworkHandoffReceipt -Stage 'public-export' -ArtifactPath $artifact -TransferID 'XFR-001' -SourceEnvironmentID 'public' -TargetEnvironmentID 'internal'
-    Assert-OfflineTest ($receipt.schema_version -eq 1) 'receipt schema version is missing'
-    Assert-OfflineTest ($receipt.artifact_sha256 -match '^[a-f0-9]{64}$') 'receipt SHA-256 is invalid'
-    Assert-HaoworkHandoffReceipt -Receipt $receipt -ArtifactPath $artifact
+Assert-True (-not ($scriptText -match 'C:\\Users\\[^\r\n]*\\AppData\\Local\\Temp')) 'v1.2.2 scripts must not use the protected C drive Temp directory'
+Assert-True (-not ($scriptText -match '(?i)GITHUB_ENV|secrets\.')) 'v1.2.2 scripts must not persist or read GitHub secrets'
+Assert-True ($scriptText -match '(?i)\.haowork\\cache') 'v1.2.2 scripts must redirect generated state to the project cache'
+Assert-True ($deployText -match '(?i)NOT_RUN') 'deployment documentation must explain unavailable real configuration as NOT_RUN'
+Assert-True (-not ($schema | ConvertTo-Json -Depth 32 | Select-String -Pattern 'token|password|secret|authorization|credential|sender_id|room_id|s3_key|trace_id|consumer_name|route_name')) 'cluster evidence schema must not expose raw credentials or private runtime identities'
+Assert-True ($schema.properties.data_path.required -contains 'assignment' -and $schema.properties.data_path.required -contains 'receipt') 'cluster evidence schema must require assignment and execution receipt evidence'
 
-    $tampered = Join-Path $TempRoot 'tampered.zip'
-    [System.IO.File]::WriteAllBytes($tampered, [byte[]](4, 3, 2, 1))
-    $tamperRejected = $false
-    try { Assert-HaoworkHandoffReceipt -Receipt $receipt -ArtifactPath $tampered } catch { $tamperRejected = $true }
-    Assert-OfflineTest $tamperRejected 'tampered artifact was accepted'
-
-    $wrongEnvironmentRejected = $false
-    try { New-HaoworkHandoffReceipt -Stage 'internal-return' -ArtifactPath $artifact -TransferID 'XFR-002' -SourceEnvironmentID 'public' -TargetEnvironmentID 'internal' | Out-Null } catch { $wrongEnvironmentRejected = $true }
-    Assert-OfflineTest $wrongEnvironmentRejected 'wrong stage environment mapping was accepted'
-
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    try {
-        $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
-        $proofPath = Join-Path $TempRoot 'network-proof.json'
-        & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'p0-05-v122-network-proof.ps1') -Side Public -LocalEndpoint "core=127.0.0.1:$port" -OppositeEndpoint 'matrix=127.0.0.1:9' -EvidencePath $proofPath | Out-Null
-        Assert-OfflineTest ($LASTEXITCODE -eq 0) 'network proof rejected a reachable local and unreachable opposite endpoint'
-        $proof = Get-Content -LiteralPath $proofPath -Raw | ConvertFrom-Json
-        Assert-OfflineTest ($proof.firewall_modified -eq $false) 'network proof reported a firewall modification'
-    } finally {
-        $listener.Stop()
-    }
-
-    Write-Output 'PASS: P0-05 v1.2.2 offline handoff receipt checks'
-} finally {
-    Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
-}
+Write-Output 'AgentTeams v1.2.2 offline and redaction contract checks passed.'

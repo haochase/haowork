@@ -3,6 +3,7 @@ package agentteamsbridge_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/haochase/haowork/internal/agentteamsbridge"
@@ -38,6 +39,28 @@ func TestProductionBridgeRejectsMissingOfficialDependency(t *testing.T) {
 	}
 }
 
+func TestProductionBridgeRejectsArtifactStoreWithoutCanonicalURIContract(t *testing.T) {
+	config := productionConfig(t)
+	config.Artifacts = &nonCanonicalProductionArtifacts{}
+	if _, err := agentteamsbridge.NewProductionTransport(config); err == nil {
+		t.Fatal("NewProductionTransport() accepted an ArtifactStore without canonical URI/key conversion")
+	}
+}
+
+func TestProductionBridgeAcceptsScopedS3ArtifactStore(t *testing.T) {
+	store, err := agentteamsbridge.NewS3ArtifactStoreWithClient(agentteamsbridge.S3ArtifactStoreConfig{
+		Bucket: "haowork-public-artifacts", EnvironmentID: "ENV-001", MissionID: "MSN-001",
+	}, &memoryS3Client{objects: map[string][]byte{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := productionConfig(t)
+	config.Artifacts = store
+	if _, err := agentteamsbridge.NewProductionTransport(config); err != nil {
+		t.Fatalf("NewProductionTransport() rejected scoped S3 store: %v", err)
+	}
+}
+
 func TestProductionBridgeRejectsLegacyProfile(t *testing.T) {
 	profile := agentteamsbridge.CapabilityProfile{
 		Name: "hi-claw/agent-teams", Version: "v1.1.2", APIVersion: "hiclaw.io/v1beta1",
@@ -49,7 +72,7 @@ func TestProductionBridgeRejectsLegacyProfile(t *testing.T) {
 	}
 }
 
-func TestProductionBridgeChecksHigressBeforeDelegation(t *testing.T) {
+func TestProductionBridgeRejectsInvalidRequestBeforeHigress(t *testing.T) {
 	want := errors.New("Higress route is unavailable")
 	inspector := &productionHigress{err: want}
 	config := productionConfig(t)
@@ -59,11 +82,11 @@ func TestProductionBridgeChecksHigressBeforeDelegation(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = transport.Start(context.Background(), executor.AgentTeamsStartRequest{EnvironmentID: "ENV-001"})
-	if !errors.Is(err, want) {
-		t.Fatalf("Start() error = %v, want Higress readiness error", err)
+	if err == nil || errors.Is(err, want) {
+		t.Fatalf("Start() error = %v, want local request validation", err)
 	}
-	if inspector.expectation.MCPServerName != "haowork-mcp" || inspector.expectation.ConsumerName != "haowork-agentteams" || inspector.expectation.RouteName != "haowork-mcp-route" {
-		t.Fatalf("Higress expectation = %#v", inspector.expectation)
+	if inspector.calls != 0 {
+		t.Fatalf("invalid request performed %d Higress checks", inspector.calls)
 	}
 }
 
@@ -106,6 +129,7 @@ func productionConfig(t *testing.T) agentteamsbridge.ProductionConfig {
 			MCPServerURL: "http://haowork-mcp.agentteams-public.svc.cluster.local:8080/mcp", MCPTransport: "http",
 		},
 		RuntimeBindings: productionBindings{},
+		Assignments:     &receiptAssignmentFake{},
 		Trace:           trace.New(t.TempDir()),
 		Mission: func(string) (model.MissionEnvelope, error) {
 			return model.MissionEnvelope{}, errors.New("not called by constructor")
@@ -116,9 +140,9 @@ func productionConfig(t *testing.T) agentteamsbridge.ProductionConfig {
 
 type productionMatrix struct{ calls int }
 
-func (matrix *productionMatrix) Send(context.Context, string, agentteamsbridge.MatrixOutbound) error {
+func (matrix *productionMatrix) Send(context.Context, string, agentteamsbridge.MatrixOutbound) (agentteamsbridge.MatrixDispatch, error) {
 	matrix.calls++
-	return nil
+	return agentteamsbridge.MatrixDispatch{EventID: "$dispatch"}, nil
 }
 func (matrix *productionMatrix) Sync(context.Context, string) (agentteamsbridge.MatrixPage, error) {
 	matrix.calls++
@@ -133,6 +157,21 @@ func (artifacts *productionArtifacts) Upload(context.Context, string, []byte, st
 }
 func (artifacts *productionArtifacts) Download(context.Context, string) ([]byte, error) {
 	artifacts.calls++
+	return nil, nil
+}
+func (*productionArtifacts) ArtifactURI(key string) (string, error) {
+	return "s3://haowork-public-artifacts/" + key, nil
+}
+func (*productionArtifacts) ArtifactKey(uri string) (string, error) {
+	return strings.TrimPrefix(uri, "s3://haowork-public-artifacts/"), nil
+}
+
+type nonCanonicalProductionArtifacts struct{}
+
+func (*nonCanonicalProductionArtifacts) Upload(context.Context, string, []byte, string) (string, error) {
+	return "artifact", nil
+}
+func (*nonCanonicalProductionArtifacts) Download(context.Context, string) ([]byte, error) {
 	return nil, nil
 }
 

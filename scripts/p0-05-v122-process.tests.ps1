@@ -21,24 +21,42 @@ function Assert-Equal {
     if ($Actual -cne $Expected) { throw "$Message; got=$Actual want=$Expected" }
 }
 
-$expected = '2026-08-15T15:16:50.0000000Z'
-$utc = [DateTime]::SpecifyKind([DateTime]'2026-08-15T15:16:50', [DateTimeKind]::Utc)
-$dmtf = [System.Management.ManagementDateTimeConverter]::ToDmtfDateTime($utc.ToLocalTime())
+function Assert-True {
+    param(
+        [Parameter(Mandatory)][bool]$Condition,
+        [Parameter(Mandatory)][string]$Message
+    )
+
+    if (-not $Condition) { throw $Message }
+}
+
+function Import-P005V122Functions {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string[]]$Names,
+        [Parameter(Mandatory)][string]$FixturePath
+    )
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
+    Assert-True ($parseErrors.Count -eq 0) "could not parse $Path"
+    foreach ($name in $Names) {
+        $function = $ast.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+        }, $true)
+        Assert-True ($null -ne $function) "$Path must expose $name"
+        $definition = $function.Extent.Text -replace '^function\s+', 'function script:'
+        Invoke-Expression $definition
+    }
+    "# Functions imported from $Path" | Set-Content -LiteralPath $FixturePath -Encoding utf8
+}
 
 foreach ($name in @('p0-05-v122-up.ps1', 'p0-05-v122-preflight.ps1', 'p0-05-v122-down.ps1')) {
     $scriptText = Get-Content -LiteralPath (Join-Path $PSScriptRoot $name) -Raw -Encoding utf8
-    $functionStart = $scriptText.IndexOf('function Get-P005V122ProcessStartTimeUtc', [StringComparison]::Ordinal)
-    $functionEnd = $scriptText.IndexOf('function ', $functionStart + 9, [StringComparison]::Ordinal)
-    if ($functionStart -lt 0 -or $functionEnd -le $functionStart) { throw "$name must expose the managed process time helper" }
-    $fixturePath = Join-Path $tmpRoot ("p0-05-v122-process-$([guid]::NewGuid().ToString('N')).ps1")
-    try {
-        $scriptText.Substring($functionStart, $functionEnd - $functionStart) | Set-Content -LiteralPath $fixturePath -Encoding utf8
-        . $fixturePath
-        Assert-Equal (Get-P005V122ProcessStartTimeUtc -Process ([pscustomobject]@{ CreationDate = $utc })) $expected "$name must accept CIM DateTime values"
-        Assert-Equal (Get-P005V122ProcessStartTimeUtc -Process ([pscustomobject]@{ CreationDate = $dmtf })) $expected "$name must retain DMTF compatibility"
-    } finally {
-        Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
-    }
+    Assert-True (-not $scriptText.Contains('Start-P005V122BrowserPortForward')) "$name must not start a persistent browser process"
+    Assert-True (-not $scriptText.Contains('Stop-P005V122BrowserPortForward')) "$name must not stop a persistent browser process"
+    Assert-True (-not $scriptText.Contains('process_start_time_utc')) "$name must not carry browser PID state"
 }
-
-Write-Output 'AgentTeams v1.2.2 managed process time tests passed.'
+Write-Output 'AgentTeams v1.2.2 process lifecycle contract checks passed.'

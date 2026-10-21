@@ -124,11 +124,11 @@ func DownloadMatrixArtifacts(ctx context.Context, store ArtifactStore, artifacts
 	}
 	refs := make([]model.ArtifactRef, 0, len(artifacts))
 	for _, artifact := range artifacts {
-		uri, err := url.Parse(artifact.URI)
-		if err != nil || uri.IsAbs() || uri.Host != "" || strings.HasPrefix(artifact.URI, "/") || strings.Contains(path.Clean(artifact.URI), "..") || artifact.Size < 0 || artifact.Size > maxBytes || artifact.EnvironmentID != environment || len(artifact.SHA256) != 64 {
+		downloadRef, err := artifactDownloadRef(store, artifact.URI)
+		if err != nil || artifact.Size < 0 || artifact.Size > maxBytes || artifact.EnvironmentID != environment || len(artifact.SHA256) != 64 {
 			return nil, fmt.Errorf("invalid Matrix artifact reference")
 		}
-		data, err := VerifyArtifactDownload(ctx, store, artifact.URI, artifact.SHA256)
+		data, err := VerifyArtifactDownload(ctx, store, downloadRef, artifact.SHA256)
 		if err != nil {
 			return nil, err
 		}
@@ -138,6 +138,20 @@ func DownloadMatrixArtifacts(ctx context.Context, store ArtifactStore, artifacts
 		refs = append(refs, model.ArtifactRef{Kind: artifact.Kind, URI: artifact.URI, SHA256: artifact.SHA256})
 	}
 	return refs, nil
+}
+
+func artifactDownloadRef(store ArtifactStore, reference string) (string, error) {
+	if resolver, ok := store.(interface{ ArtifactKey(string) (string, error) }); ok {
+		return resolver.ArtifactKey(reference)
+	}
+	parsed, err := url.Parse(reference)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || strings.HasPrefix(reference, "/") || strings.Contains(path.Clean(reference), "..") {
+		return "", errors.New("artifact reference must be a relative path")
+	}
+	if err := validateArtifactPath(reference); err != nil {
+		return "", err
+	}
+	return reference, nil
 }
 
 func VerifyArtifactDownload(ctx context.Context, store ArtifactStore, ref, wantSHA256 string) ([]byte, error) {

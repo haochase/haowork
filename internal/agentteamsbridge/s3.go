@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -79,11 +80,50 @@ func NewS3ArtifactStoreWithClient(config S3ArtifactStoreConfig, client S3ObjectC
 	if client == nil || strings.TrimSpace(config.Bucket) == "" || strings.TrimSpace(config.EnvironmentID) == "" || strings.TrimSpace(config.MissionID) == "" {
 		return nil, errors.New("S3 client, bucket, environment, and mission are required")
 	}
+	if !validS3Name(config.Bucket) || !validS3PathSegment(config.EnvironmentID) || !validS3PathSegment(config.MissionID) {
+		return nil, errors.New("S3 bucket, environment, and mission must be canonical path components")
+	}
 	maxBytes := config.MaxBytes
 	if maxBytes <= 0 {
 		maxBytes = defaultS3ArtifactMaxBytes
 	}
 	return &S3ArtifactStore{client: client, bucket: strings.TrimSpace(config.Bucket), environmentID: strings.TrimSpace(config.EnvironmentID), missionID: strings.TrimSpace(config.MissionID), maxBytes: maxBytes}, nil
+}
+
+// ArtifactURI converts a validated store-relative key to the canonical URI
+// exposed at governance boundaries. S3 client operations continue to use keys.
+func (store *S3ArtifactStore) ArtifactURI(key string) (string, error) {
+	if store == nil {
+		return "", errors.New("S3 artifact store is required")
+	}
+	if _, err := store.validateKey(key); err != nil {
+		return "", err
+	}
+	return (&url.URL{Scheme: "s3", Host: store.bucket, Path: "/" + key}).String(), nil
+}
+
+// ArtifactKey validates a canonical external URI against this store's bucket,
+// environment, and mission and returns the relative key used by the S3 client.
+func (store *S3ArtifactStore) ArtifactKey(raw string) (string, error) {
+	if store == nil || strings.TrimSpace(raw) != raw || raw == "" || strings.Contains(raw, "%") {
+		return "", errors.New("S3 artifact URI is not canonical")
+	}
+	location, err := url.Parse(raw)
+	if err != nil || location.Scheme != "s3" || location.Host != store.bucket || location.User != nil || location.Opaque != "" || location.RawPath != "" || location.RawQuery != "" || location.Fragment != "" {
+		return "", errors.New("S3 artifact URI does not match the configured bucket")
+	}
+	key := strings.TrimPrefix(location.Path, "/")
+	if key == location.Path || location.Path != "/"+key {
+		return "", errors.New("S3 artifact URI path is invalid")
+	}
+	if _, err := store.validateKey(key); err != nil {
+		return "", err
+	}
+	canonical, err := store.ArtifactURI(key)
+	if err != nil || canonical != raw {
+		return "", errors.New("S3 artifact URI is not canonical")
+	}
+	return key, nil
 }
 
 func (store *S3ArtifactStore) Upload(ctx context.Context, ref string, data []byte, digest string) (string, error) {
@@ -175,6 +215,16 @@ func normalizedSHA256(value string) (string, error) {
 		return "", errors.New("artifact digest must be a SHA-256 hex string")
 	}
 	return value, nil
+}
+
+func validS3Name(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && !strings.ContainsAny(value, "/\\@:%?#")
+}
+
+func validS3PathSegment(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && value != "." && value != ".." && url.PathEscape(value) == value
 }
 
 type minioS3Client struct{ client *minio.Client }

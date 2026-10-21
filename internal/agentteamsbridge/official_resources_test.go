@@ -44,7 +44,7 @@ func TestRenderWorkerBindsRoleSkillsAndMCPServer(t *testing.T) {
 	}
 
 	wantSkills := map[model.AgentFunction][]string{
-		model.FunctionDeliveryLeader: {"context"},
+		model.FunctionDeliveryLeader: {"context", "submit_execution_report"},
 		model.FunctionResearch:       {"advisory", "context"},
 		model.FunctionBuild:          {"context", "patch"},
 		model.FunctionVerify:         {"audit"},
@@ -83,6 +83,47 @@ func TestRenderWorkerBindsRoleSkillsAndMCPServer(t *testing.T) {
 		}
 		if _, hasLegacyTokenRef := server["consumerTokenRef"]; hasLegacyTokenRef {
 			t.Fatalf("%s retains a private consumer token field: %#v", function, server)
+		}
+	}
+}
+
+func TestOfficialDeliveryLeaderReceivesReceiptSkillAndMCPServer(t *testing.T) {
+	resources, err := agentteamsbridge.RenderOfficialMissionResources(officialTestMission(), officialTestResourceConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	managerSkills, _, _ := unstructured.NestedStringSlice(resources.Manager.Object.Object, "spec", "skills")
+	if testContainsString(managerSkills, "submit_execution_report") {
+		t.Fatalf("manager received leader-only receipt skill: %#v", managerSkills)
+	}
+	for _, worker := range resources.Workers {
+		function := model.AgentFunction(worker.Object.GetLabels()[agentteamsbridge.HaoworkAgentFunctionLabel])
+		if function != model.FunctionDeliveryLeader {
+			continue
+		}
+		skills, _, _ := unstructured.NestedStringSlice(worker.Object.Object, "spec", "skills")
+		servers, _, _ := unstructured.NestedSlice(worker.Object.Object, "spec", "mcpServers")
+		if !testContainsString(skills, "submit_execution_report") || len(servers) != 1 {
+			t.Fatalf("delivery leader skills=%#v mcpServers=%#v", skills, servers)
+		}
+		return
+	}
+	t.Fatal("delivery leader worker not rendered")
+}
+
+func TestResearchBuildVerifyDoNotReceiveReceiptSkill(t *testing.T) {
+	resources, err := agentteamsbridge.RenderOfficialMissionResources(officialTestMission(), officialTestResourceConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, worker := range resources.Workers {
+		function := model.AgentFunction(worker.Object.GetLabels()[agentteamsbridge.HaoworkAgentFunctionLabel])
+		if function == model.FunctionDeliveryLeader {
+			continue
+		}
+		skills, _, _ := unstructured.NestedStringSlice(worker.Object.Object, "spec", "skills")
+		if testContainsString(skills, "submit_execution_report") {
+			t.Fatalf("%s received receipt skill: %#v", function, skills)
 		}
 	}
 }
@@ -236,8 +277,18 @@ func officialTestMission() model.MissionEnvelope {
 			{Name: "advisory", Version: "v1"},
 			{Name: "patch", Version: "v1"},
 			{Name: "audit", Version: "v1"},
+			{Name: "submit_execution_report", Version: "1.0.0"},
 		},
 	}
+}
+
+func testContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func officialTestResourceConfig() agentteamsbridge.OfficialResourceConfig {

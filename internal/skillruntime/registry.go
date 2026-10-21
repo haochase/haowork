@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
+	"math/big"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/haochase/haowork/internal/model"
@@ -24,7 +28,7 @@ type Registry struct {
 
 var canonicalSkillNames = map[string]struct{}{
 	"plan": {}, "context": {}, "record": {}, "history": {}, "verify": {}, "export": {}, "import": {},
-	"advisory": {}, "mirror": {}, "patch": {}, "audit": {},
+	"advisory": {}, "mirror": {}, "patch": {}, "audit": {}, "submit_execution_report": {},
 }
 
 type definitionDocument struct {
@@ -164,7 +168,9 @@ func ValidateJSONInput(definition Definition, input json.RawMessage) error {
 		return errors.New("input must contain exactly one JSON value")
 	}
 	var schema map[string]any
-	if err := json.Unmarshal(definition.InputSchema, &schema); err != nil {
+	schemaDecoder := json.NewDecoder(bytes.NewReader(definition.InputSchema))
+	schemaDecoder.UseNumber()
+	if err := schemaDecoder.Decode(&schema); err != nil {
 		return errors.New("registry input schema is invalid")
 	}
 	return validateJSONValue(schema, value)
@@ -229,8 +235,14 @@ func validateDocument(document definitionDocument) (Definition, error) {
 
 func validateJSONObjectSchema(value string) (json.RawMessage, error) {
 	var valueNode any
-	if err := json.Unmarshal([]byte(value), &valueNode); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.UseNumber()
+	if err := decoder.Decode(&valueNode); err != nil {
 		return nil, errors.New("must be valid JSON object schema")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, errors.New("must contain exactly one JSON object schema")
 	}
 	if err := validateSchemaNode(valueNode, true); err != nil {
 		return nil, err
@@ -245,13 +257,15 @@ func validateSchemaNode(value any, root bool) error {
 	}
 	for key := range schema {
 		switch key {
-		case "$schema", "type", "properties", "required", "items", "additionalProperties", "enum", "const", "description":
+		case "$schema", "type", "properties", "required", "items", "additionalProperties", "enum", "const", "description", "pattern", "minLength", "maxItems", "minimum", "maximum":
 		default:
 			return fmt.Errorf("unsupported schema keyword %q", key)
 		}
 	}
+	typeName := ""
 	if rawType, exists := schema["type"]; exists {
-		typeName, ok := rawType.(string)
+		var ok bool
+		typeName, ok = rawType.(string)
 		if !ok || !validJSONType(typeName) {
 			return errors.New("schema type must be a valid JSON type")
 		}
@@ -318,6 +332,45 @@ func validateSchemaNode(value any, root bool) error {
 		values, ok := rawEnum.([]any)
 		if !ok || len(values) == 0 {
 			return errors.New("enum must be a non-empty array")
+		}
+	}
+	if rawPattern, exists := schema["pattern"]; exists {
+		pattern, ok := rawPattern.(string)
+		if !ok {
+			return errors.New("pattern must be a string")
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return errors.New("pattern must be a valid regular expression")
+		}
+	}
+	for _, keyword := range []string{"minLength", "maxItems"} {
+		if raw, exists := schema[keyword]; exists && !schemaNonnegativeInteger(raw) {
+			return fmt.Errorf("%s must be a non-negative integer", keyword)
+		}
+	}
+	for _, keyword := range []string{"minimum", "maximum"} {
+		if raw, exists := schema[keyword]; exists {
+			boundary, ok := schemaNumber(raw)
+			if !ok || !finiteJSONNumber(boundary) {
+				return fmt.Errorf("%s must be a number", keyword)
+			}
+		}
+	}
+	if minimum, hasMinimum := schemaNumber(schema["minimum"]); hasMinimum {
+		if maximum, hasMaximum := schemaNumber(schema["maximum"]); hasMaximum {
+			comparison, ok := compareJSONNumbers(minimum, maximum)
+			if !ok || comparison > 0 {
+				return errors.New("minimum cannot exceed maximum")
+			}
+		}
+	}
+	if typeName == "integer" {
+		for _, keyword := range []string{"minimum", "maximum"} {
+			if boundary, exists := schemaNumber(schema[keyword]); exists {
+				if _, err := strconv.ParseInt(boundary.String(), 10, 64); err != nil {
+					return fmt.Errorf("integer %s must fit int64", keyword)
+				}
+			}
 		}
 	}
 	return nil
@@ -394,22 +447,56 @@ func validateJSONValue(schema map[string]any, value any) error {
 				}
 			}
 		}
+		if maximum, exists := schemaInteger(schema["maxItems"]); exists && len(values) > maximum {
+			return errors.New("input array exceeds maxItems")
+		}
 	case "string":
-		if _, ok := value.(string); !ok {
+		text, ok := value.(string)
+		if !ok {
 			return errors.New("input must be a string")
+		}
+		if minimum, exists := schemaInteger(schema["minLength"]); exists && len([]rune(text)) < minimum {
+			return errors.New("input string is shorter than minLength")
+		}
+		if pattern, exists := schema["pattern"].(string); exists && !regexp.MustCompile(pattern).MatchString(text) {
+			return errors.New("input string does not match pattern")
 		}
 	case "boolean":
 		if _, ok := value.(bool); !ok {
 			return errors.New("input must be a boolean")
 		}
 	case "number":
-		if _, ok := value.(json.Number); !ok {
+		number, ok := value.(json.Number)
+		if !ok || !finiteJSONNumber(number) {
 			return errors.New("input must be a number")
+		}
+		if minimum, exists := schemaNumber(schema["minimum"]); exists {
+			if comparison, valid := compareJSONNumbers(number, minimum); !valid || comparison < 0 {
+				return errors.New("input number is below minimum")
+			}
+		}
+		if maximum, exists := schemaNumber(schema["maximum"]); exists {
+			if comparison, valid := compareJSONNumbers(number, maximum); !valid || comparison > 0 {
+				return errors.New("input number exceeds maximum")
+			}
 		}
 	case "integer":
 		number, ok := value.(json.Number)
 		if !ok || strings.ContainsAny(number.String(), ".eE") {
 			return errors.New("input must be an integer")
+		}
+		if _, err := strconv.ParseInt(number.String(), 10, 64); err != nil {
+			return errors.New("input integer is out of range")
+		}
+		if minimum, exists := schemaNumber(schema["minimum"]); exists {
+			if comparison, valid := compareJSONNumbers(number, minimum); !valid || comparison < 0 {
+				return errors.New("input integer is below minimum")
+			}
+		}
+		if maximum, exists := schemaNumber(schema["maximum"]); exists {
+			if comparison, valid := compareJSONNumbers(number, maximum); !valid || comparison > 0 {
+				return errors.New("input integer exceeds maximum")
+			}
 		}
 	case "null":
 		if value != nil {
@@ -417,6 +504,49 @@ func validateJSONValue(schema map[string]any, value any) error {
 		}
 	}
 	return nil
+}
+
+func schemaNonnegativeInteger(value any) bool {
+	number, ok := schemaNumber(value)
+	if !ok {
+		return false
+	}
+	integer, ok := new(big.Int).SetString(number.String(), 10)
+	return ok && integer.Sign() >= 0 && integer.IsInt64()
+}
+
+func schemaNumber(value any) (json.Number, bool) {
+	number, ok := value.(json.Number)
+	return number, ok
+}
+
+func schemaInteger(value any) (int, bool) {
+	number, ok := schemaNumber(value)
+	if !ok {
+		return 0, false
+	}
+	integer, err := strconv.ParseInt(number.String(), 10, 64)
+	if err != nil || integer < 0 || int64(int(integer)) != integer {
+		return 0, false
+	}
+	return int(integer), true
+}
+
+func compareJSONNumbers(left, right json.Number) (int, bool) {
+	leftValue, ok := new(big.Rat).SetString(left.String())
+	if !ok {
+		return 0, false
+	}
+	rightValue, ok := new(big.Rat).SetString(right.String())
+	if !ok {
+		return 0, false
+	}
+	return leftValue.Cmp(rightValue), true
+}
+
+func finiteJSONNumber(number json.Number) bool {
+	value, err := number.Float64()
+	return err == nil && !math.IsInf(value, 0) && !math.IsNaN(value)
 }
 
 func validJSONType(value string) bool {
@@ -430,7 +560,7 @@ func validJSONType(value string) bool {
 
 func validateCanonicalSkillSet(definitions map[string]map[string]Definition) error {
 	if len(definitions) != len(canonicalSkillNames) {
-		return errors.New("registry must contain exactly eleven canonical skill names")
+		return errors.New("registry must contain exactly twelve canonical skill names")
 	}
 	for name := range canonicalSkillNames {
 		versions, exists := definitions[name]

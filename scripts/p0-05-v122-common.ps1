@@ -206,6 +206,103 @@ function Test-P005V122ValuesDeploymentImagesReady {
   return Test-P005V122DeploymentImagesReady -Contract $Contract -ManagerRuntime $managerRuntime -WorkerRuntime $workerRuntime
 }
 
+function Get-P005V122ServiceProxySpec {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Zone)
+
+  switch -CaseSensitive ($Zone) {
+    'public' {
+      return [ordered]@{
+        Zone = 'public'
+        Namespace = 'haowork-public'
+        ElementServiceName = 'haowork-public-agentteams-element-web'
+        ElementPort = 8080
+        GatewayServiceName = 'higress-gateway'
+        GatewayPort = 80
+      }
+    }
+    'internal' {
+      return [ordered]@{
+        Zone = 'internal'
+        Namespace = 'haowork-internal'
+        ElementServiceName = 'haowork-internal-agentteams-element-web'
+        ElementPort = 8080
+        GatewayServiceName = 'higress-gateway'
+        GatewayPort = 80
+      }
+    }
+    default { throw 'BLOCKED_SERVICE_PROXY_ZONE' }
+  }
+}
+
+function Get-P005V122ServiceProxyPath {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Namespace,
+    [Parameter(Mandatory)][string]$ServiceName,
+    [Parameter(Mandatory)][int]$Port
+  )
+
+  return "/api/v1/namespaces/$Namespace/services/${ServiceName}:$Port/proxy/"
+}
+
+function Test-P005V122ServiceReadyEndpoints {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Kubectl,
+    [Parameter(Mandatory)][string]$Namespace,
+    [Parameter(Mandatory)][string]$ServiceName,
+    [string]$CacheDirectory,
+    [int]$ReadyPort = 0,
+    [int]$DeadlineSeconds = 30
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CacheDirectory)) { $CacheDirectory = Join-Path (Split-Path -Parent $env:KUBECONFIG) 'service-proxy.kubectl-cache' }
+  $deadline = [DateTime]::UtcNow.AddSeconds($DeadlineSeconds)
+  do {
+    $raw = @(& $Kubectl --kubeconfig $env:KUBECONFIG --cache-dir $CacheDirectory --request-timeout=10s get endpointslices.discovery.k8s.io --selector "kubernetes.io/service-name=$ServiceName" --namespace $Namespace -o json 2>$null)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($raw -join "`n"))) {
+      try {
+        $slices = ($raw -join "`n") | ConvertFrom-Json
+        $readySubsets = @($slices.items | Where-Object {
+          @($_.endpoints | Where-Object { @($_.addresses).Count -gt 0 -and $_.conditions.ready -eq $true }).Count -gt 0 -and
+          ($ReadyPort -le 0 -or @($_.ports | Where-Object { [int]$_.port -eq $ReadyPort }).Count -gt 0)
+        })
+        if ($readySubsets.Count -gt 0) { return $true }
+      } catch { }
+    }
+    if ([DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
+  } while ([DateTime]::UtcNow -lt $deadline)
+  return $false
+}
+
+function Invoke-P005V122ServiceProxyReadiness {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Kubectl,
+    [Parameter(Mandatory)][string]$Zone,
+    [string]$CacheDirectory,
+    [int]$DeadlineSeconds = 30
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CacheDirectory)) { $CacheDirectory = Join-Path (Split-Path -Parent $env:KUBECONFIG) 'service-proxy.kubectl-cache' }
+  $spec = Get-P005V122ServiceProxySpec -Zone $Zone
+  $zoneToken = $Zone.ToUpperInvariant()
+  if (-not (Test-P005V122ServiceReadyEndpoints -Kubectl $Kubectl -CacheDirectory $CacheDirectory -Namespace $spec.Namespace -ServiceName $spec.GatewayServiceName -ReadyPort $spec.GatewayPort -DeadlineSeconds $DeadlineSeconds)) {
+    throw "BLOCKED_SERVICE_PROXY_${zoneToken}_GATEWAY_ENDPOINTS"
+  }
+  $deadline = [DateTime]::UtcNow.AddSeconds($DeadlineSeconds)
+  $elementPath = Get-P005V122ServiceProxyPath -Namespace $spec.Namespace -ServiceName $spec.ElementServiceName -Port $spec.ElementPort
+  do {
+    if (Test-P005V122ServiceReadyEndpoints -Kubectl $Kubectl -CacheDirectory $CacheDirectory -Namespace $spec.Namespace -ServiceName $spec.ElementServiceName -DeadlineSeconds 1) {
+      $response = @(& $Kubectl --kubeconfig $env:KUBECONFIG --cache-dir $CacheDirectory --request-timeout=10s get --raw $elementPath 2>$null | Where-Object { $_.ToString().Trim() -notmatch '^Warning:' })
+      if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($response -join "`n"))) { return }
+    }
+    if ([DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "BLOCKED_SERVICE_PROXY_${zoneToken}_ELEMENT"
+}
+
 function Test-P005V122ExpectedUpstreamPath {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$UpstreamRoot)
